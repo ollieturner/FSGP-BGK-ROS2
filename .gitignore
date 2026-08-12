@@ -45,3 +45,8 @@ Thumbs.db
 CATKIN_IGNORE
 COLCON_IGNORE
 
+# Added virtual environment and python ignores
+.venv/
+__pycache__/
+*.pyc
+
