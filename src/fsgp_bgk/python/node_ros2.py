@@ -166,7 +166,11 @@ class FSGP_BGK_Node(Node):
         grid = self.analyzer.grid
         mean = self.analyzer.mean
 
-        intensity = 1.0 - traversabilitys
+        # intensity = 1.0 - traversabilitys
+        intensity = traversabilitys    # was: 1.0 - traversabilitys -- f_sgp_bgk.py:239 already converted
+                                       # traversability(high=good) -> cost(high=bad); this second flip
+                                       # was undoing that conversion.
+
         smpld_pcl = np.column_stack((grid[:, 0], grid[:, 1], mean, intensity))
 
         position = np.array(self.global_pose[:3])

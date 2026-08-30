@@ -187,6 +187,8 @@ class TraversabilityAnalyzerWithBGK_GPU:
             min_num, max_num = cp.min(traversability), cp.max(traversability)
             range_val = max_num - min_num if max_num != min_num else 1e-10
             traversability = (traversability - min_num) / range_val
+            # Added in: Match the else branch: high = good/traversable, not high = hazard (then flipped in f_sgp_bgk.py)
+            traversability = 1 - traversability  
         else:
             traversability = 1 - traversability_pre
 
