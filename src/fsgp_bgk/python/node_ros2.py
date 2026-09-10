@@ -69,9 +69,13 @@ class FSGP_BGK_Node(Node):
         self.grid_resolution = self.analyzer.resolution  
         self.grid_size = (int(self.max_radius * 2 // self.grid_resolution), int(self.max_radius * 2 // self.grid_resolution))
         self.grid_half = int(self.max_radius // self.grid_resolution)
-        self.global_grid = csr_matrix(self.grid_size, dtype=np.float32)  
-        self.global_grid_ldd = csr_matrix(self.grid_size, dtype=np.float32)  
-        self.log_odds_grid = np.full(self.grid_size, np.log(self.occupancy_threshold / (1 - self.occupancy_threshold)))  
+        self.global_grid = csr_matrix(self.grid_size, dtype=np.float32)
+        self.global_grid_ldd = csr_matrix(self.grid_size, dtype=np.float32)
+        # No log-odds/BGK fusion for variance (that machinery treats the cost
+        # as an occupancy probability, which doesn't extend to a variance
+        # value) -- just accumulate + smooth, same treatment as global_grid.
+        self.global_variance_grid = csr_matrix(self.grid_size, dtype=np.float32)
+        self.log_odds_grid = np.full(self.grid_size, np.log(self.occupancy_threshold / (1 - self.occupancy_threshold)))
 
         self.high_res_resolution =  self.publish_resolution
         self.high_res_half = int(self.max_radius / self.high_res_resolution)
@@ -95,7 +99,8 @@ class FSGP_BGK_Node(Node):
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
             PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-            PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1)
+            PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1),
+            PointField(name='variance', offset=16, datatype=PointField.FLOAT32, count=1)
         ]
 
     def odom_cb(self, msg):
@@ -143,17 +148,20 @@ class FSGP_BGK_Node(Node):
                         (grid_indices[:, 1] + self.grid_half >= 0) & (grid_indices[:, 1] + self.grid_half < self.grid_size[1])
         grid_indices = grid_indices[valid_indices]
         traversability = global_smpld_pcl[valid_indices, 3]
+        variance = global_smpld_pcl[valid_indices, 4]
 
         x_indices = grid_indices[:, 0] + self.grid_half
         y_indices = grid_indices[:, 1] + self.grid_half
         self.log_odds_grid[x_indices, y_indices] += self.observation_model(traversability)
-        self.log_odds_grid = np.clip(self.log_odds_grid, -10, 10)  
-        self.global_grid_ldd[x_indices, y_indices] = 1 / (1 + np.exp(-self.log_odds_grid[x_indices, y_indices]))  
+        self.log_odds_grid = np.clip(self.log_odds_grid, -10, 10)
+        self.global_grid_ldd[x_indices, y_indices] = 1 / (1 + np.exp(-self.log_odds_grid[x_indices, y_indices]))
 
         self.global_grid[x_indices, y_indices] = traversability
+        self.global_variance_grid[x_indices, y_indices] = variance
 
         self.global_grid = csr_matrix(uniform_filter(self.global_grid.toarray(), size=self.smooth_kernel_size))
         self.global_grid_ldd = csr_matrix(uniform_filter(self.global_grid_ldd.toarray(), size=self.smooth_kernel_size))
+        self.global_variance_grid = csr_matrix(uniform_filter(self.global_variance_grid.toarray(), size=self.smooth_kernel_size))
 
     def map_thread(self):
         if self.latest_pcl is None or self.global_pose is None:
@@ -165,13 +173,14 @@ class FSGP_BGK_Node(Node):
         traversabilitys = self.analyzer.traversability
         grid = self.analyzer.grid
         mean = self.analyzer.mean
+        variance = self.analyzer.var
 
         # intensity = 1.0 - traversabilitys
         intensity = traversabilitys    # was: 1.0 - traversabilitys -- f_sgp_bgk.py:239 already converted
                                        # traversability(high=good) -> cost(high=bad); this second flip
                                        # was undoing that conversion.
 
-        smpld_pcl = np.column_stack((grid[:, 0], grid[:, 1], mean, intensity))
+        smpld_pcl = np.column_stack((grid[:, 0], grid[:, 1], mean, intensity, variance))
 
         position = np.array(self.global_pose[:3])
         orientation = np.array(quaternion_from_euler(*self.global_pose[3:]))
@@ -192,14 +201,25 @@ class FSGP_BGK_Node(Node):
         try:
             global_grid_dense = self.global_grid.toarray()
             global_grid_ldd_dense = self.global_grid_ldd.toarray()
+            global_variance_dense = self.global_variance_grid.toarray()
 
             interp_intensity = RegularGridInterpolator((low_res_x, low_res_y), global_grid_dense, method='linear', bounds_error=False, fill_value=1)
             interp_intensity_ldd = RegularGridInterpolator((low_res_x, low_res_y), global_grid_ldd_dense, method='linear', bounds_error=False, fill_value=1)
+            # fill_value=0, not 1: unlike cost, there's no "unknown = worst
+            # case" convention for variance -- and the edge-ring mask below
+            # already forces cost to max-lethal there regardless of variance.
+            interp_variance = RegularGridInterpolator((low_res_x, low_res_y), global_variance_dense, method='linear', bounds_error=False, fill_value=0)
 
             high_res_points_global = self.high_res_points + self.global_pose[:2]
 
             high_res_intensity = interp_intensity(high_res_points_global)
             high_res_intensity_ldd = interp_intensity_ldd(high_res_points_global)
+            # Same current-frame variance is paired with both clouds -- the
+            # LDD cloud's cost is temporally fused via log-odds/BGK, but that
+            # fusion has no sound analog for variance (see node_ros2.py's
+            # global_variance_grid comment), so its paired variance is always
+            # this frame's own GP uncertainty, not a fused one.
+            high_res_variance = interp_variance(high_res_points_global)
         except Exception as e:
             self.get_logger().error(f"Interpolation failed: {e}")
             return
@@ -208,23 +228,26 @@ class FSGP_BGK_Node(Node):
 
         radius = np.hypot(self.high_res_xx.flatten(), self.high_res_yy.flatten())
         high_res_intensity[radius > self.max_radius - self.high_res_resolution * 2] = 1
-        high_res_cloud_data = np.stack([self.high_res_xx.flatten() + self.global_pose[0],  
-                                    self.high_res_yy.flatten() + self.global_pose[1],  
-                                    z, high_res_intensity], axis=1)
+        high_res_variance[radius > self.max_radius - self.high_res_resolution * 2] = 0
+        high_res_cloud_data = np.stack([self.high_res_xx.flatten() + self.global_pose[0],
+                                    self.high_res_yy.flatten() + self.global_pose[1],
+                                    z, high_res_intensity, high_res_variance], axis=1)
         self.header.stamp = self.get_clock().now().to_msg()
         self.traversability_pcl_pub.publish(pc2.create_cloud(self.header, self.fields, high_res_cloud_data))
 
         high_res_intensity_ldd[radius > self.max_radius - self.high_res_resolution * 2] = 1
-        high_res_cloud_data_ldd = np.stack([self.high_res_xx.flatten() + self.global_pose[0],  
-                                            self.high_res_yy.flatten() + self.global_pose[1], 
-                                            z, high_res_intensity_ldd], axis=1)
+        high_res_cloud_data_ldd = np.stack([self.high_res_xx.flatten() + self.global_pose[0],
+                                            self.high_res_yy.flatten() + self.global_pose[1],
+                                            z, high_res_intensity_ldd, high_res_variance], axis=1)
         self.traversability_pcl_ldd_pub.publish(pc2.create_cloud(self.header, self.fields, high_res_cloud_data_ldd))
 
     def transform_smpl_pcl(self, smpl_pcl, position, orientation):
-        points = smpl_pcl[:, :3]  
-        rotation_matrix = quaternion_matrix(orientation)[:3, :3]  
-        transformed_points = np.dot(points, rotation_matrix.T) + position  
-        transformed_smpl_pcl = np.column_stack((transformed_points, smpl_pcl[:, 3]))  
+        points = smpl_pcl[:, :3]
+        rotation_matrix = quaternion_matrix(orientation)[:3, :3]
+        transformed_points = np.dot(points, rotation_matrix.T) + position
+        # [:, 3:] rather than [:, 3] so every trailing column (intensity,
+        # variance, ...) is carried through, not just the first one.
+        transformed_smpl_pcl = np.column_stack((transformed_points, smpl_pcl[:, 3:]))
         return transformed_smpl_pcl
 
 def main(args=None):

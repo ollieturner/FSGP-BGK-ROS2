@@ -99,6 +99,7 @@ class TraversabilityAnalyzer:
         )
         
         self.mean = None
+        self.var = None
         self.grad_mean = None
         self.slope = None
         self.flatness = None
@@ -228,6 +229,13 @@ class TraversabilityAnalyzer:
         
         start_time = time.time()
         self.mean = mean
+        # Raw, full-length GP variance -- aligned 1:1 with self.mean/self.grid
+        # (unlike filtered_var below, which drops cells and feeds only the
+        # normalized "uncertainty" information-gain score used internally by
+        # BGK fusion). Exposed for consumers that need the actual per-cell
+        # variance alongside the published cost, e.g. closed-form Gaussian
+        # risk metrics downstream.
+        self.var = var
         self.grad_mean = filtered_grad_mean
         self.slope = self.analyzer.calculate_slope(filtered_grad_mean, self.max_slope, self.min_slope, self.test_slope)
         self.flatness = self.analyzer.calculate_flatness_entropy(np.array(filter_grid[:, 2]), self.max_flatness, self.min_flatness, self.test_flatness)
