@@ -10,7 +10,7 @@ obstacle_threshold: 0.5
 occupancy_threshold: 0.5  
 decay_rate: 1  
 smooth_kernel_size: 3  
-map_update_rate: 0.025 # 1
+map_update_rate: 0.025 # Change this - 1
 publish_resolution: 0.1
 #keypoints
 curvature_threshold: 0.03 
@@ -23,26 +23,26 @@ lengthscale: 0.1
 alpha: 10
 #base
 resolution: 0.2
-x_length: 5
-y_length: 5
+x_length: 5 # Change this
+y_length: 5 # Change this
 i_num: 15
 base_height: -0.15
 #trv
-max_slope: 0.8
-min_slope: 0.0
+max_slope: 0.8  # Change this 
+min_slope: 0.0  # Change this
 test_slope: 0
-max_flatness: 0.1
-min_flatness: 0.0
+max_flatness: 0.1 # Change this
+min_flatness: 0.0 # Change this
 test_flatness: 0
-max_height: 0.1
-min_height: 0.0
+max_height: 0.1 # Change this
+min_height: 0.0 # Change this
 test_height: 0
-max_uncertainty: 1.6
-min_uncertainty: 0.64
+max_uncertainty: 1.6 # Change this
+min_uncertainty: 0.64 # Change this
 test_uncertainty: 0
-w_slope: 0.3
-w_flatness: 0.3
-w_step_height: 0.2
-time_window: 600
+w_slope: 0.3 # Change this
+w_flatness: 0.3 # Change this
+w_step_height: 0.2 # Change this
+time_window: 600 # Change this
 max_history_frames: 3
 bgk_threshold: 0.8
