@@ -47,14 +47,39 @@ def calculate_gradients_gpu(pcl_tensor, indices):
     gradients = torch.mean(torch.abs(dz), dim=1)
     return gradients
 
-def extract_features_with_classification_gpu(pcl_arr, curvature_threshold=0.1, gradient_threshold=0.05, voxel_size=0.2, target_num_points=10000):
-    pcl_positions = pcl_arr[:, :3]  
-    pcl_intensities = pcl_arr[:, 3]  
+def perturb_points_lidar(pcl_tensor, sigma_r, sigma_theta, generator=None):
+    # Sensor noise in spherical terms, sensor at the origin of pcl_tensor's frame:
+    # range error along the beam u, plus angular error displacing the point by ~r*sigma_theta
+    # in the two directions perpendicular to u. Applied once to the whole cloud per sample,
+    # before bootstrapping, so a point drawn twice carries the same measurement error.
+    r = pcl_tensor.norm(dim=1, keepdim=True).clamp_min(1e-6)
+    u = pcl_tensor / r
+    ref = torch.zeros_like(u)
+    ref[:, 2] = 1.0
+    ref[u[:, 2].abs() > 0.999] = torch.tensor([1.0, 0.0, 0.0], device=u.device)
+    e1 = torch.linalg.cross(u, ref)
+    e1 = e1 / e1.norm(dim=1, keepdim=True).clamp_min(1e-9)
+    e2 = torch.linalg.cross(u, e1)
+
+    eps = torch.randn(pcl_tensor.shape[0], 3, generator=generator, device=pcl_tensor.device)
+    return pcl_tensor + sigma_r * eps[:, :1] * u + r * sigma_theta * (eps[:, 1:2] * e1 + eps[:, 2:3] * e2)
+
+def bootstrap_features_gpu(pcl_tensor, indices, generator=None):
+    # Resample each point's k neighbours with replacement; curvature and gradient are both
+    # computed from the same resampled set so their dependence is kept.
+    n, k = indices.shape
+    draw = torch.randint(0, k, (n, k), generator=generator, device=indices.device)
+    boot = indices.gather(1, draw)
+    return calculate_curvatures_gpu(pcl_tensor, boot), calculate_gradients_gpu(pcl_tensor, boot)
+
+def extract_features_with_classification_gpu(pcl_arr, curvature_threshold=0.1, gradient_threshold=0.05, voxel_size=0.2, target_num_points=10000, k=20, return_aux=False):
+    pcl_positions = pcl_arr[:, :3]
+    pcl_intensities = pcl_arr[:, 3]
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     pcl_tensor = torch.tensor(pcl_positions, dtype=torch.float32).to(device)
 
-    _, indices = gpu_knn_search(pcl_tensor)
+    _, indices = gpu_knn_search(pcl_tensor, k=k)
 
     curvatures = calculate_curvatures_gpu(pcl_tensor, indices)
     gradients = calculate_gradients_gpu(pcl_tensor, indices)
@@ -83,9 +108,15 @@ def extract_features_with_classification_gpu(pcl_arr, curvature_threshold=0.1, g
         downsampled_points_extended = np.empty((0, 6))  
 
     processed_pcl = np.vstack((feature_points_with_values, downsampled_points_extended))
+    # Per output row: index into pcl_arr for feature rows, -1 for downsampled non-feature rows
+    # (those keep c = g = 0 and have no source point to recompute features from)
+    src_idx = np.concatenate((np.where(is_feature.cpu().numpy())[0], np.full(len(downsampled_points_extended), -1)))
 
     if len(processed_pcl) > target_num_points:
-        indices = np.random.choice(len(processed_pcl), target_num_points, replace=False)
-        processed_pcl = processed_pcl[indices]
+        choice = np.random.choice(len(processed_pcl), target_num_points, replace=False)
+        processed_pcl = processed_pcl[choice]
+        src_idx = src_idx[choice]
 
+    if return_aux:
+        return processed_pcl, pcl_tensor, indices, src_idx
     return processed_pcl

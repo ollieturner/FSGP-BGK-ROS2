@@ -19,8 +19,13 @@ key_voxel_size: 0.1
 inducing_points: 500 
 #hyperparameters
 open_pca: False
-lengthscale: 0.1
-alpha: 10
+lengthscale: 0.1  # only used if apply_kernel_init: True (initial value for every input's lengthscale, ARD)
+alpha: 10         # only used if apply_kernel_init: True (initial RQ alpha)
+apply_kernel_init: False  # False = original behaviour: RQKernel ignores lengthscale/alpha, both start at 0.693
+gp_train_iters: 1   # AdamW steps on the marginal likelihood per frame (original: 1)
+gp_lr: 0.01         # original: 0.01
+gp_noise_init: -1   # initial GP likelihood noise variance [m^2], still trained; -1 = GPyTorch default (0.693).
+                    # e.g. 0.0004 = lidar_range_std^2
 #base
 resolution: 0.2
 x_length: 5 # Change this
@@ -46,3 +51,11 @@ w_step_height: 0.2 # Change this
 time_window: 600 # Change this
 max_history_frames: 3
 bgk_threshold: 0.8
+#sampling (per-cell traversability distribution)
+num_samples: 20             # N Monte Carlo samples per cell; 0 disables sampling
+knn_k: 20                   # neighbourhood size for curvature/gradient features and bootstrap
+lidar_range_std: 0.02       # sigma_r [m], Livox MID-360 range precision @10 m (1 sigma)
+lidar_angular_std_deg: 0.15 # sigma_theta [deg], Livox MID-360 angular precision (1 sigma)
+sample_seed: -1             # -1 = unseeded; >= 0 for reproducible runs (N convergence study)
+grad_cov_jitter: 1.0e-8     # added to posterior gradient covariance diagonal before Cholesky
+smooth_sample_slope: False  # apply calculate_slope's gaussian_filter to sampled gradients (shrinks spread)

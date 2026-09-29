@@ -31,10 +31,8 @@ from f_sgp_bgk import TraversabilityAnalyzer
 from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
 from tf_transformations import euler_from_quaternion, quaternion_from_euler, quaternion_matrix
-from scipy.ndimage import uniform_filter
 import yaml
 from scipy.interpolate import RegularGridInterpolator
-from scipy.sparse import csr_matrix
 
 class FSGP_BGK_Node(Node):
     def __init__(self):
@@ -51,17 +49,16 @@ class FSGP_BGK_Node(Node):
         self.cloud_topic = config["cloud_topic"]  
         self.odom_topic = config["odom_topic"]   
         self.global_link = config["global_link"]   
-        self.max_height = config["max_cloud_height"]   
-        self.occupancy_threshold = config["occupancy_threshold"]   
-        self.decay_rate = config["decay_rate"]   
-        self.smooth_kernel_size = config["smooth_kernel_size"]   
-        self.map_update_rate = config["map_update_rate"]   
-        self.obstacle_threshold = 1 - config["obstacle_threshold"]
-        self.binarization_condition = config["binarization_condition"]
+        self.max_height = config["max_cloud_height"]
+        self.map_update_rate = config["map_update_rate"]
         self.publish_resolution = config["publish_resolution"]
-        
+
         self.analyzer = TraversabilityAnalyzer(config_path=config_path)
-        self.max_radius = (self.analyzer.x_length + self.analyzer.y_length) / 4  
+        self.num_samples = self.analyzer.num_samples
+        if self.num_samples < 1:
+            # The node only publishes the per-cell traversability distribution
+            raise ValueError("num_samples must be >= 1")
+        self.max_radius = (self.analyzer.x_length + self.analyzer.y_length) / 4
 
         self.global_pose = None  
         self.latest_pcl = None  
@@ -69,13 +66,11 @@ class FSGP_BGK_Node(Node):
         self.grid_resolution = self.analyzer.resolution  
         self.grid_size = (int(self.max_radius * 2 // self.grid_resolution), int(self.max_radius * 2 // self.grid_resolution))
         self.grid_half = int(self.max_radius // self.grid_resolution)
-        self.global_grid = csr_matrix(self.grid_size, dtype=np.float32)
-        self.global_grid_ldd = csr_matrix(self.grid_size, dtype=np.float32)
-        # No log-odds/BGK fusion for variance (that machinery treats the cost
-        # as an occupancy probability, which doesn't extend to a variance
-        # value) -- just accumulate + smooth, same treatment as global_grid.
-        self.global_variance_grid = csr_matrix(self.grid_size, dtype=np.float32)
-        self.log_odds_grid = np.full(self.grid_size, np.log(self.occupancy_threshold / (1 - self.occupancy_threshold)))
+        # Per-cell traversability samples, one channel per sample (dense rather than N sparse
+        # matrices). Cells are overwritten each frame; no log-odds fusion (binarising each sample
+        # would destroy the distribution) and no spatial smoothing (it would average independent
+        # draws across neighbouring cells and shrink each cell's spread).
+        self.global_sample_grid = np.zeros((*self.grid_size, self.num_samples), dtype=np.float32)
 
         self.high_res_resolution =  self.publish_resolution
         self.high_res_half = int(self.max_radius / self.high_res_resolution)
@@ -88,19 +83,20 @@ class FSGP_BGK_Node(Node):
         self.sph_pcl_sub = self.create_subscription(PointCloud2, self.cloud_topic, self.elevation_cb, 3)
         self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.odom_cb, 3)
 
-        self.traversability_pcl_pub = self.create_publisher(PointCloud2, "traversability_pcl", 3)
         self.traversability_pcl_ldd_pub = self.create_publisher(PointCloud2, "traversability_pcl_ldd", 3)
 
         self.map_timer = self.create_timer(self.map_update_rate, self.map_thread)
 
         self.header = Header()
         self.header.frame_id = self.global_link
+        # x, y, z, then one float32 per traversability sample (cost, high = bad)
         self.fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
             PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-            PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1),
-            PointField(name='variance', offset=16, datatype=PointField.FLOAT32, count=1)
+        ] + [
+            PointField(name=f'trav_{i}', offset=12 + 4 * i, datatype=PointField.FLOAT32, count=1)
+            for i in range(self.num_samples)
         ]
 
     def odom_cb(self, msg):
@@ -131,37 +127,17 @@ class FSGP_BGK_Node(Node):
         mask = (xyz[:, 2] < self.max_height) & (radius_sq < self.max_radius**2)
         return xyz[mask]
 
-    def observation_model(self, traversability):
-        if self.binarization_condition:
-            log_odds = np.zeros_like(traversability)
-            log_odds[traversability > self.obstacle_threshold] = np.log(0.95 / (1 - 0.95))  
-            log_odds[traversability <= self.obstacle_threshold] = np.log(0.05 / (1 - 0.05))  
-            return log_odds
-        else:
-            traversability = np.clip(traversability, 0.001, 0.999)
-            return np.log(traversability / (1 - traversability))
-
     def update_global_grid(self, global_smpld_pcl):
         pose_x, pose_y = self.global_pose[0], self.global_pose[1]
         grid_indices = ((global_smpld_pcl[:, :2] - np.array([pose_x, pose_y])) / self.grid_resolution).astype(int)
         valid_indices = (grid_indices[:, 0] + self.grid_half >= 0) & (grid_indices[:, 0] + self.grid_half < self.grid_size[0]) & \
                         (grid_indices[:, 1] + self.grid_half >= 0) & (grid_indices[:, 1] + self.grid_half < self.grid_size[1])
         grid_indices = grid_indices[valid_indices]
-        traversability = global_smpld_pcl[valid_indices, 3]
-        variance = global_smpld_pcl[valid_indices, 4]
+        samples = global_smpld_pcl[valid_indices, 3:]
 
         x_indices = grid_indices[:, 0] + self.grid_half
         y_indices = grid_indices[:, 1] + self.grid_half
-        self.log_odds_grid[x_indices, y_indices] += self.observation_model(traversability)
-        self.log_odds_grid = np.clip(self.log_odds_grid, -10, 10)
-        self.global_grid_ldd[x_indices, y_indices] = 1 / (1 + np.exp(-self.log_odds_grid[x_indices, y_indices]))
-
-        self.global_grid[x_indices, y_indices] = traversability
-        self.global_variance_grid[x_indices, y_indices] = variance
-
-        self.global_grid = csr_matrix(uniform_filter(self.global_grid.toarray(), size=self.smooth_kernel_size))
-        self.global_grid_ldd = csr_matrix(uniform_filter(self.global_grid_ldd.toarray(), size=self.smooth_kernel_size))
-        self.global_variance_grid = csr_matrix(uniform_filter(self.global_variance_grid.toarray(), size=self.smooth_kernel_size))
+        self.global_sample_grid[x_indices, y_indices, :] = samples
 
     def map_thread(self):
         if self.latest_pcl is None or self.global_pose is None:
@@ -170,17 +146,11 @@ class FSGP_BGK_Node(Node):
         local_points_np = self.pointcloud2_to_xyz(self.latest_pcl)
 
         self.analyzer.update_map(self.global_pose, local_points_np)
-        traversabilitys = self.analyzer.traversability
         grid = self.analyzer.grid
         mean = self.analyzer.mean
-        variance = self.analyzer.var
 
-        # intensity = 1.0 - traversabilitys
-        intensity = traversabilitys    # was: 1.0 - traversabilitys -- f_sgp_bgk.py:239 already converted
-                                       # traversability(high=good) -> cost(high=bad); this second flip
-                                       # was undoing that conversion.
-
-        smpld_pcl = np.column_stack((grid[:, 0], grid[:, 1], mean, intensity, variance))
+        # x, y, GP elevation mean, then the N traversability samples per cell
+        smpld_pcl = np.column_stack((grid[:, 0], grid[:, 1], mean, self.analyzer.traversability_samples))
 
         position = np.array(self.global_pose[:3])
         orientation = np.array(quaternion_from_euler(*self.global_pose[3:]))
@@ -194,32 +164,15 @@ class FSGP_BGK_Node(Node):
             self.get_logger().warn("Global pose is not available.")
             return
 
-        grid_shape = self.global_grid.shape
+        grid_shape = self.global_sample_grid.shape
         low_res_x = (np.arange(grid_shape[0]) - self.grid_half) * self.grid_resolution + self.global_pose[0]
         low_res_y = (np.arange(grid_shape[1]) - self.grid_half) * self.grid_resolution + self.global_pose[1]
 
         try:
-            global_grid_dense = self.global_grid.toarray()
-            global_grid_ldd_dense = self.global_grid_ldd.toarray()
-            global_variance_dense = self.global_variance_grid.toarray()
-
-            interp_intensity = RegularGridInterpolator((low_res_x, low_res_y), global_grid_dense, method='linear', bounds_error=False, fill_value=1)
-            interp_intensity_ldd = RegularGridInterpolator((low_res_x, low_res_y), global_grid_ldd_dense, method='linear', bounds_error=False, fill_value=1)
-            # fill_value=0, not 1: unlike cost, there's no "unknown = worst
-            # case" convention for variance -- and the edge-ring mask below
-            # already forces cost to max-lethal there regardless of variance.
-            interp_variance = RegularGridInterpolator((low_res_x, low_res_y), global_variance_dense, method='linear', bounds_error=False, fill_value=0)
-
             high_res_points_global = self.high_res_points + self.global_pose[:2]
-
-            high_res_intensity = interp_intensity(high_res_points_global)
-            high_res_intensity_ldd = interp_intensity_ldd(high_res_points_global)
-            # Same current-frame variance is paired with both clouds -- the
-            # LDD cloud's cost is temporally fused via log-odds/BGK, but that
-            # fusion has no sound analog for variance (see node_ros2.py's
-            # global_variance_grid comment), so its paired variance is always
-            # this frame's own GP uncertainty, not a fused one.
-            high_res_variance = interp_variance(high_res_points_global)
+            # Vector-valued grid (nx, ny, N) -> (P, N); unknown = lethal (cost 1)
+            interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='linear', bounds_error=False, fill_value=1)
+            high_res_samples = interp_samples(high_res_points_global)
         except Exception as e:
             self.get_logger().error(f"Interpolation failed: {e}")
             return
@@ -227,26 +180,18 @@ class FSGP_BGK_Node(Node):
         z = np.full_like(self.high_res_xx.flatten(), self.global_pose[2]) + self.analyzer.base_height
 
         radius = np.hypot(self.high_res_xx.flatten(), self.high_res_yy.flatten())
-        high_res_intensity[radius > self.max_radius - self.high_res_resolution * 2] = 1
-        high_res_variance[radius > self.max_radius - self.high_res_resolution * 2] = 0
-        high_res_cloud_data = np.stack([self.high_res_xx.flatten() + self.global_pose[0],
-                                    self.high_res_yy.flatten() + self.global_pose[1],
-                                    z, high_res_intensity, high_res_variance], axis=1)
+        high_res_samples[radius > self.max_radius - self.high_res_resolution * 2] = 1
+        high_res_cloud_data = np.column_stack([self.high_res_xx.flatten() + self.global_pose[0],
+                                               self.high_res_yy.flatten() + self.global_pose[1],
+                                               z, high_res_samples])
         self.header.stamp = self.get_clock().now().to_msg()
-        self.traversability_pcl_pub.publish(pc2.create_cloud(self.header, self.fields, high_res_cloud_data))
-
-        high_res_intensity_ldd[radius > self.max_radius - self.high_res_resolution * 2] = 1
-        high_res_cloud_data_ldd = np.stack([self.high_res_xx.flatten() + self.global_pose[0],
-                                            self.high_res_yy.flatten() + self.global_pose[1],
-                                            z, high_res_intensity_ldd, high_res_variance], axis=1)
-        self.traversability_pcl_ldd_pub.publish(pc2.create_cloud(self.header, self.fields, high_res_cloud_data_ldd))
+        self.traversability_pcl_ldd_pub.publish(pc2.create_cloud(self.header, self.fields, high_res_cloud_data))
 
     def transform_smpl_pcl(self, smpl_pcl, position, orientation):
         points = smpl_pcl[:, :3]
         rotation_matrix = quaternion_matrix(orientation)[:3, :3]
         transformed_points = np.dot(points, rotation_matrix.T) + position
-        # [:, 3:] rather than [:, 3] so every trailing column (intensity,
-        # variance, ...) is carried through, not just the first one.
+        # [:, 3:] so every trailing column (the N traversability samples) is carried through.
         transformed_smpl_pcl = np.column_stack((transformed_points, smpl_pcl[:, 3:]))
         return transformed_smpl_pcl
 

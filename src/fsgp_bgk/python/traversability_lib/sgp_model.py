@@ -26,15 +26,27 @@ import torch
 import gpytorch
 
 class SGPModel(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, inducing_points, lengthscale=0.7, alpha=10):
+    def __init__(self, train_x, train_y, likelihood, inducing_points, lengthscale=0.7, alpha=10, apply_kernel_init=False):
         super(SGPModel, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ConstantMean()  
+        self.mean_module = gpytorch.means.ConstantMean()
         inducing_variable=train_x
 
         #gpytorch.kernels.RQKernel or gpytorch.kernels.RBFKernel
-        self.base_covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RQKernel(lengthscale=torch.tensor([lengthscale, lengthscale]), alpha=torch.tensor([alpha]))
-        )
+        if apply_kernel_init:
+            # RQKernel's constructor silently ignores lengthscale=/alpha= kwargs (they fall into
+            # **kwargs), so set them after construction. One lengthscale per input (ARD): x, y are
+            # in metres over +-x_length/2, curvature/gradient features are O(0.1), so a shared
+            # lengthscale can't suit both.
+            rq_kernel = gpytorch.kernels.RQKernel(ard_num_dims=train_x.shape[-1])
+            rq_kernel.lengthscale = lengthscale
+            rq_kernel.alpha = alpha
+            self.base_covar_module = gpytorch.kernels.ScaleKernel(rq_kernel)
+        else:
+            # Original behaviour: lengthscale/alpha kwargs are ignored by RQKernel, so both start
+            # at GPyTorch's default (0.693) with a single shared lengthscale
+            self.base_covar_module = gpytorch.kernels.ScaleKernel(
+                gpytorch.kernels.RQKernel(lengthscale=torch.tensor([lengthscale, lengthscale]), alpha=torch.tensor([alpha]))
+            )
         # self.base_covar_module = gpytorch.kernels.ScaleKernel(
         #     gpytorch.kernels.RBFKernel(lengthscale=torch.tensor([lengthscale, lengthscale]), alpha=torch.tensor([alpha]))
         # )
