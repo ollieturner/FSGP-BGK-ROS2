@@ -59,3 +59,4 @@ lidar_angular_std_deg: 0.15 # sigma_theta [deg], Livox MID-360 angular precision
 sample_seed: -1             # -1 = unseeded; >= 0 for reproducible runs (N convergence study)
 grad_cov_jitter: 1.0e-8     # added to posterior gradient covariance diagonal before Cholesky
 smooth_sample_slope: False  # apply calculate_slope's gaussian_filter to sampled gradients (shrinks spread)
+publish_risk_factors: True # False # also store + publish slope/flatness/step-height sample distributions on /risk_factor_pcl

@@ -94,6 +94,7 @@ class TraversabilityAnalyzer:
         self.sample_seed = config["sample_seed"]
         self.grad_cov_jitter = config["grad_cov_jitter"]
         self.smooth_sample_slope = config["smooth_sample_slope"]
+        self.publish_risk_factors = config["publish_risk_factors"]
         if self.num_samples > 0 and self.open_pca:
             # PCA mixes the GP inputs, so columns 0/1 would no longer be x/y for the spatial gradient
             raise ValueError("num_samples > 0 requires open_pca: False")
@@ -127,6 +128,11 @@ class TraversabilityAnalyzer:
         self.uncertainty = None
         self.traversability = None
         self.traversability_samples = None
+        # Per-cell samples of the three normalised [0, 1] risk factors the cost is
+        # built from; only filled when publish_risk_factors is set
+        self.slope_samples = None
+        self.flatness_samples = None
+        self.step_height_samples = None
 
         self.pose = None
         self.traversability_dict = None
@@ -295,6 +301,12 @@ class TraversabilityAnalyzer:
         feature_rows = self.key_src_idx >= 0
         feature_src = torch.as_tensor(self.key_src_idx[feature_rows], device=self.pcl_tensor.device)
         samples = np.empty((len(self.keep_idx), self.num_samples), dtype=np.float32)
+        if self.publish_risk_factors:
+            # Normalised [0, 1] factor values, before weighting:
+            # samples == w_slope * slope + w_flatness * flatness + w_step_height * step_height
+            slope_samples = np.empty_like(samples)
+            flatness_samples = np.empty_like(samples)
+            step_height_samples = np.empty_like(samples)
 
         for i in range(self.num_samples):
             noisy = choose_point.perturb_points_lidar(self.pcl_tensor, self.lidar_range_std, self.lidar_angular_std, self.sample_generator)
@@ -328,6 +340,15 @@ class TraversabilityAnalyzer:
             step_height = self.analyzer.calculate_step_height_topology(grid[self.keep_idx, 3], self.max_height, self.min_height)
 
             samples[:, i] = slope * self.w_slope + flatness * self.w_flatness + step_height * self.w_step_height
+            if self.publish_risk_factors:
+                slope_samples[:, i] = slope
+                flatness_samples[:, i] = flatness
+                step_height_samples[:, i] = step_height
+
+        if self.publish_risk_factors:
+            self.slope_samples = slope_samples
+            self.flatness_samples = flatness_samples
+            self.step_height_samples = step_height_samples
 
         return samples
 

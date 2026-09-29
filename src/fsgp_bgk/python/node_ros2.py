@@ -71,6 +71,12 @@ class FSGP_BGK_Node(Node):
         # would destroy the distribution) and no spatial smoothing (it would average independent
         # draws across neighbouring cells and shrink each cell's spread).
         self.global_sample_grid = np.zeros((*self.grid_size, self.num_samples), dtype=np.float32)
+        # Optional: per-cell samples of the three normalised risk factors the cost is built from,
+        # channels slope 0..N-1, flatness 0..N-1, step height 0..N-1; same treatment as
+        # global_sample_grid (overwritten each frame, no smoothing)
+        self.publish_risk_factors = self.analyzer.publish_risk_factors
+        if self.publish_risk_factors:
+            self.global_factor_grid = np.zeros((*self.grid_size, 3 * self.num_samples), dtype=np.float32)
 
         self.high_res_resolution =  self.publish_resolution
         self.high_res_half = int(self.max_radius / self.high_res_resolution)
@@ -84,6 +90,8 @@ class FSGP_BGK_Node(Node):
         self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self.odom_cb, 3)
 
         self.traversability_pcl_ldd_pub = self.create_publisher(PointCloud2, "traversability_pcl_ldd", 3)
+        if self.publish_risk_factors:
+            self.risk_factor_pcl_pub = self.create_publisher(PointCloud2, "risk_factor_pcl", 3)
 
         self.map_timer = self.create_timer(self.map_update_rate, self.map_thread)
 
@@ -98,6 +106,15 @@ class FSGP_BGK_Node(Node):
             PointField(name=f'trav_{i}', offset=12 + 4 * i, datatype=PointField.FLOAT32, count=1)
             for i in range(self.num_samples)
         ]
+        # risk_factor_pcl: x, y, z, then slope_i, flat_i, step_i (normalised [0, 1] factor samples,
+        # NaN = no factor data), each block of N float32s
+        if self.publish_risk_factors:
+            self.factor_fields = self.fields[:3] + [
+                PointField(name=f'{name}_{i}', offset=12 + 4 * (block * self.num_samples + i),
+                           datatype=PointField.FLOAT32, count=1)
+                for block, name in enumerate(('slope', 'flat', 'step'))
+                for i in range(self.num_samples)
+            ]
 
     def odom_cb(self, msg):
         if msg is None:
@@ -133,11 +150,13 @@ class FSGP_BGK_Node(Node):
         valid_indices = (grid_indices[:, 0] + self.grid_half >= 0) & (grid_indices[:, 0] + self.grid_half < self.grid_size[0]) & \
                         (grid_indices[:, 1] + self.grid_half >= 0) & (grid_indices[:, 1] + self.grid_half < self.grid_size[1])
         grid_indices = grid_indices[valid_indices]
-        samples = global_smpld_pcl[valid_indices, 3:]
+        samples = global_smpld_pcl[valid_indices, 3:3 + self.num_samples]
 
         x_indices = grid_indices[:, 0] + self.grid_half
         y_indices = grid_indices[:, 1] + self.grid_half
         self.global_sample_grid[x_indices, y_indices, :] = samples
+        if self.publish_risk_factors:
+            self.global_factor_grid[x_indices, y_indices, :] = global_smpld_pcl[valid_indices, 3 + self.num_samples:]
 
     def map_thread(self):
         if self.latest_pcl is None or self.global_pose is None:
@@ -150,7 +169,11 @@ class FSGP_BGK_Node(Node):
         mean = self.analyzer.mean
 
         # x, y, GP elevation mean, then the N traversability samples per cell
-        smpld_pcl = np.column_stack((grid[:, 0], grid[:, 1], mean, self.analyzer.traversability_samples))
+        columns = [grid[:, 0], grid[:, 1], mean, self.analyzer.traversability_samples]
+        if self.publish_risk_factors:
+            # ... then N slope, N flatness and N step-height samples per cell
+            columns += [self.analyzer.slope_samples, self.analyzer.flatness_samples, self.analyzer.step_height_samples]
+        smpld_pcl = np.column_stack(columns)
 
         position = np.array(self.global_pose[:3])
         orientation = np.array(quaternion_from_euler(*self.global_pose[3:]))
@@ -173,6 +196,12 @@ class FSGP_BGK_Node(Node):
             # Vector-valued grid (nx, ny, N) -> (P, N); unknown = lethal (cost 1)
             interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='linear', bounds_error=False, fill_value=1)
             high_res_samples = interp_samples(high_res_points_global)
+            if self.publish_risk_factors:
+                # Same linear interpolation (so interpolated trav still equals the weighted sum
+                # of the interpolated factors); unknown = NaN rather than 1, since factors of 1
+                # would recombine to w_slope + w_flatness + w_step_height, not a lethal cost
+                interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='linear', bounds_error=False, fill_value=np.nan)
+                high_res_factors = interp_factors(high_res_points_global)
         except Exception as e:
             self.get_logger().error(f"Interpolation failed: {e}")
             return
@@ -180,18 +209,26 @@ class FSGP_BGK_Node(Node):
         z = np.full_like(self.high_res_xx.flatten(), self.global_pose[2]) + self.analyzer.base_height
 
         radius = np.hypot(self.high_res_xx.flatten(), self.high_res_yy.flatten())
-        high_res_samples[radius > self.max_radius - self.high_res_resolution * 2] = 1
+        edge = radius > self.max_radius - self.high_res_resolution * 2
+        high_res_samples[edge] = 1
         high_res_cloud_data = np.column_stack([self.high_res_xx.flatten() + self.global_pose[0],
                                                self.high_res_yy.flatten() + self.global_pose[1],
                                                z, high_res_samples])
+        # One stamp for both clouds, so consumers can pair them exactly (TimeSynchronizer)
         self.header.stamp = self.get_clock().now().to_msg()
         self.traversability_pcl_ldd_pub.publish(pc2.create_cloud(self.header, self.fields, high_res_cloud_data))
+
+        if self.publish_risk_factors:
+            high_res_factors[edge] = np.nan
+            high_res_factor_data = np.column_stack([high_res_cloud_data[:, :3], high_res_factors])
+            self.risk_factor_pcl_pub.publish(pc2.create_cloud(self.header, self.factor_fields, high_res_factor_data))
 
     def transform_smpl_pcl(self, smpl_pcl, position, orientation):
         points = smpl_pcl[:, :3]
         rotation_matrix = quaternion_matrix(orientation)[:3, :3]
         transformed_points = np.dot(points, rotation_matrix.T) + position
-        # [:, 3:] so every trailing column (the N traversability samples) is carried through.
+        # [:, 3:] so every trailing column (the N traversability samples, and the factor
+        # samples when publish_risk_factors is set) is carried through.
         transformed_smpl_pcl = np.column_stack((transformed_points, smpl_pcl[:, 3:]))
         return transformed_smpl_pcl
 
