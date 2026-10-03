@@ -87,6 +87,7 @@ class TraversabilityAnalyzer:
         self.downsampl_voxel_size = config["downsampl_voxel_size"]
         self.open_pca=config["open_pca"]
 
+        # Additional paragemeters (see config for descriptions)
         self.num_samples = config["num_samples"]
         self.knn_k = config["knn_k"]
         self.lidar_range_std = config["lidar_range_std"]
@@ -100,11 +101,13 @@ class TraversabilityAnalyzer:
             raise ValueError("num_samples > 0 requires open_pca: False")
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Random number generator for Monte Carlo sampling for LiDAR noise perturbation, bootstrap resampling and slope 
         self.sample_generator = torch.Generator(device=self.device)
         if self.sample_seed >= 0:
-            self.sample_generator.manual_seed(self.sample_seed)
+            self.sample_generator.manual_seed(self.sample_seed) # Use the seed given for repeatable runs
         else:
-            self.sample_generator.seed()
+            self.sample_generator.seed() # Randomly generate seed 
 
     def initialize_components(self):
         self.pca = PCA(n_components=4)
@@ -127,25 +130,26 @@ class TraversabilityAnalyzer:
         self.step_height = None
         self.uncertainty = None
         self.traversability = None
-        self.traversability_samples = None
-        # Per-cell samples of the three normalised [0, 1] risk factors the cost is
-        # built from; only filled when publish_risk_factors is set
-        self.slope_samples = None
-        self.flatness_samples = None
-        self.step_height_samples = None
 
         self.pose = None
         self.traversability_dict = None
         self.kd_tree = None
         self.data_dict = None
+        
+        # Additional variables - traversability and risk factor distribution storages 
+        # (Risk factors only built when publish_risk_factors is set)
+        self.traversability_samples = None          # Distribution of traversability values
+        self.slope_samples = None
+        self.flatness_samples = None
+        self.step_height_samples = None
 
+    # Add column of 1s to LiDAR point cloud (x, y, z)
     def fake_intensity(self, pcl, num_points):
         num_original_points = pcl.shape[0]
         return np.hstack([pcl, np.ones((num_original_points, 1))])
 
+    # Build local grid, then find and store each cell's 5 nearest neighbours and their inverse-distance weights (once per frame)
     def _fit_grid_interp(self):
-        # Grid cells and their fixed k=5 inverse-distance weights to the key points; computed
-        # once per frame and reused by every sample, since key point positions don't change.
         x_range = self.x_length / 2
         y_range = self.y_length / 2
         x_s = np.arange(-x_range, x_range, self.resolution, dtype='float32')
@@ -160,26 +164,30 @@ class TraversabilityAnalyzer:
         weights = 1 / (distances + 1e-6)
         self.grid_knn_w = weights / np.sum(weights, axis=1, keepdims=True)
 
+    # Curvature and gradient of each cell as the weighted average of 5 nearest neighbours
     def _interp_features(self, curvatures_train, gradients_train):
         curvatures_pred = np.sum(self.grid_knn_w[:, :, None] * curvatures_train[self.grid_knn_idx], axis=1)
         gradients_pred = np.sum(self.grid_knn_w[:, :, None] * gradients_train[self.grid_knn_idx], axis=1)
         return curvatures_pred, gradients_pred
 
+    # Build local interporlated grid of [x, y, curvature, gradient]
     def sampling_grid(self):
         self._fit_grid_interp()
         curvatures_pred, gradients_pred = self._interp_features(self.curvatures, self.gradients)
         self.grid = np.column_stack((self.grid_xy, curvatures_pred, gradients_pred))
 
-    def filter_low_uncertainty_data(self, mean, var, grad_mean, grid, threshold=1.35):
+    # Only keep data whose GP variance is below an uncertainty threshold
+    def filter_low_uncertainty_data(self, mean, var, grad_mean, grid, threshold=1.35): # Old FSGP-BGK threshold parameter
         low_uncertainty_indices = np.where(var < threshold)[0]
         self.keep_idx = low_uncertainty_indices
-        filtered_mean = mean[low_uncertainty_indices]
-        filtered_var = var[low_uncertainty_indices]
-        filtered_grad_mean = grad_mean[low_uncertainty_indices]
-        filtered_grid = grid[low_uncertainty_indices]
+        # filtered_mean = mean[low_uncertainty_indices]
+        # filtered_var = var[low_uncertainty_indices]
+        # filtered_grad_mean = grad_mean[low_uncertainty_indices]
+        # filtered_grid = grid[low_uncertainty_indices]
         
-        return filtered_mean, filtered_var, filtered_grad_mean, filtered_grid
+        # return filtered_mean, filtered_var, filtered_grad_mean, filtered_grid
 
+    # Add points to prior, assuming ground near robot is flat
     def generate_robot_points(self, l, w):
         x = np.linspace(-l/2, l/2, num=self.i_num)
         y = np.linspace(-w/2, w/2, num=self.i_num)
@@ -193,12 +201,15 @@ class TraversabilityAnalyzer:
         
         return np.column_stack((x, y, z, i, c, g))
 
+    # Generate the traversability distributions (and per-factor when enabled) for the local costmap (some changes here compared to FSGP-BGK)
     def generate_local_traversability_map(self, pose, transformed_points):
+        # Extract pose and point cloud
         self.pose = pose
-        start_time = time.time()
+        # start_time = time.time()
         expanded_pcl = self.fake_intensity(transformed_points, 5000)
         expanded_pcl = point_cloud_tool.voxel_downsample(expanded_pcl, voxel_size=self.downsampl_voxel_size)
 
+        # Identify feature points based on thresholds
         key_points, self.pcl_tensor, self.knn_indices, key_src_idx = choose_point.extract_features_with_classification_gpu(
             expanded_pcl,
             curvature_threshold=self.curvature_threshold,
@@ -210,18 +221,20 @@ class TraversabilityAnalyzer:
         )
 
         self.keypoints = key_points
-        robot_points = self.generate_robot_points(self.x_length, self.y_length)
+        robot_points = self.generate_robot_points(self.x_length, self.y_length) # TODO Try with smaller grid around robot
         key_points = np.vstack((key_points, robot_points))
-        # Robot footprint points have no source point either (c = g = 0), so pad with -1
+        # Index in pcl_tensor if a feature point, -1 otherwise (non-feature point (c=g=0) or robot point). Used in sampling loop
         self.key_src_idx = np.concatenate((key_src_idx, np.full(len(robot_points), -1)))
-        
+
+        # Extract points (x, y, z), curvature and gradients from feature points
         self.Xs = key_points[:, 0].reshape(-1, 1)
         self.Ys = key_points[:, 1].reshape(-1, 1)
         self.Zs = key_points[:, 2].reshape(-1, 1)
         self.curvatures = key_points[:, 4].reshape(-1, 1)
         self.gradients = key_points[:, 5].reshape(-1, 1)
-        
-        start_time = time.time()
+
+        # Prepare GP training inputs (d_in) and outputs (d_out)
+        # start_time = time.time()
         data = np.column_stack((self.Xs, self.Ys, self.curvatures, self.gradients))
         grid_train=None
         if self.open_pca:
@@ -230,77 +243,72 @@ class TraversabilityAnalyzer:
             grid_train=data
         d_in = torch.tensor(grid_train, dtype=torch.float32, device=self.device)
         d_out = torch.tensor(self.Zs, dtype=torch.float32, device=self.device).squeeze()
-        
+
+        # Create noise model for GP model
         likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_constraint=gpytorch.constraints.GreaterThan(1e-4))
+        # Use GP noise from config, instead of the GPpTorch default 0.693
         if self.gp_noise_init > 0:
-            # Start the (still learned) height noise here instead of GPyTorch's default 0.693 m^2
             likelihood.noise = self.gp_noise_init
+        # Build GP model (see file for description)
         sgp_model = SGPModel(d_in, d_out, likelihood, self.inducing_points, self.lengthscale, self.alpha, self.apply_kernel_init).to(self.device)
 
-        start_time = time.time()
+        # start_time = time.time()
+        # Put GP into training mode (return prior not predictions)
         sgp_model.train()
         likelihood.train()
-        optimizer = torch.optim.AdamW(sgp_model.parameters(), lr=self.gp_lr)
-        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, sgp_model)
+        optimizer = torch.optim.AdamW(sgp_model.parameters(), lr=self.gp_lr)            # Create optimiser 
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, sgp_model)           # Setup training objective (how probable observed heights are under the GP)
 
+        # Put into loop (compared to original) for more training iterations
         self.gp_loss_history = []
         for _ in range(self.gp_train_iters):
             optimizer.zero_grad()
-            output = sgp_model(d_in)
-            loss = -mll(output, d_out).mean()
-            loss.backward()
-            optimizer.step()
+            output = sgp_model(d_in)                # GP prior over training points
+            loss = -mll(output, d_out).mean()       # Negative score from objective (lower is better)
+            loss.backward()                         # How each setting should change to minimise loss
+            optimizer.step()                        # Iterate (push) settings to minimise loss
             self.gp_loss_history.append(loss.item())
-        
+
+        # Switch to prediction mode (return posterior/prediction)
         sgp_model.eval()
         likelihood.eval()
-        
+
+        # Build up the test grid 
         self.sampling_grid()
         grid_test=None
         if self.open_pca:
             grid_test=self.pca.fit_transform(self.grid)
         else:
             grid_test=self.grid
-        Xtest_tensor = torch.tensor(grid_test, dtype=torch.float32, requires_grad=True).to(sgp_model.device)
-        start_time = time.time()
-        preds = sgp_model.likelihood(sgp_model(Xtest_tensor))
-        mean = preds.mean.detach().cpu().numpy()
-        var = preds.variance.detach().cpu().numpy()
-        grad_mean = torch.autograd.grad(preds.mean.sum(), Xtest_tensor, create_graph=True)[0].detach().cpu().numpy()
-        
-        filtered_mean, filtered_var, filtered_grad_mean, filter_grid = self.filter_low_uncertainty_data(mean, var, grad_mean, self.grid)
-        
-        start_time = time.time()
-        self.mean = mean
-        # Raw, full-length GP variance -- aligned 1:1 with self.mean/self.grid
-        # (unlike filtered_var below, which drops cells and feeds only the
-        # normalized "uncertainty" information-gain score used internally by
-        # BGK fusion). Exposed for consumers that need the actual per-cell
-        # variance alongside the published cost, e.g. closed-form Gaussian
-        # risk metrics downstream.
-        self.var = var
-        self.grad_mean = filtered_grad_mean
-        self.slope = self.analyzer.calculate_slope(filtered_grad_mean, self.max_slope, self.min_slope, self.test_slope)
-        self.flatness = self.analyzer.calculate_flatness_entropy(np.array(filter_grid[:, 2]), self.max_flatness, self.min_flatness, self.test_flatness)
-        self.step_height = self.analyzer.calculate_step_height_topology(np.array(filter_grid[:, 3]), self.max_height, self.min_height, self.test_height)
-        self.uncertainty = self.analyzer.calculate_uncertainty_information_gain(filtered_var, 1, self.max_uncertainty, self.min_uncertainty, self.test_uncertainty)
-        current_position = (pose[0], pose[1])
-        
-        start_time = time.time()
-        self.traversability = 1.0 - self.analyzer.calculate_traversability(self.mean, self.slope, self.flatness, self.step_height, self.uncertainty, current_position, self.w_slope, self.w_flatness, self.w_step_height, self.bgk_threshold)
+        Xtest_tensor = torch.tensor(grid_test, dtype=torch.float32, requires_grad=True).to(sgp_model.device)    # Turn test grid into tensor
 
+        # start_time = time.time()
+
+        # Get GP posterior at each cell 
+        preds = sgp_model.likelihood(sgp_model(Xtest_tensor))
+        mean = preds.mean.detach().cpu().numpy()            # Predicted height
+        var = preds.variance.detach().cpu().numpy()         # Predicted variance (includes noise)
+        grad_mean = torch.autograd.grad(preds.mean.sum(), Xtest_tensor, create_graph=True)[0].detach().cpu().numpy()    # Derivative of predicted height with respect to each input
+
+        # Filter the data based on an uncertainty threshold
+        # filtered_mean, filtered_var, filtered_grad_mean, filter_grid = self.filter_low_uncertainty_data(mean, var, grad_mean, self.grid)
+        self.filter_low_uncertainty_data(mean, var, grad_mean, self.grid)
+
+        # Save predicted heights to publish as z coordinate in node_ros2
+        self.mean = mean       
+
+        # Use the trained GP model in the sampling loop to produce a distribution of traversability values per cell (removed original detemrinistic method)
         if self.num_samples > 0:
             self.traversability_samples = self.sample_traversability_distribution(sgp_model)
 
+    # Produce N samples of traversability cost at each cell from terrain risk factors (skips BGK fusion )
     def sample_traversability_distribution(self, sgp_model):
-        # N Monte Carlo samples of the cost per cell (high = bad, same orientation as
-        # self.traversability). Each sample: LiDAR noise on the cloud, bootstrap of every point's
-        # k-neighbourhood, re-interpolated k*/g*, and a spatial gradient drawn from the GP's
-        # posterior derivative distribution. The GP itself is not retrained. Samples bypass BGK
-        # temporal fusion (calculate_traversability mutates its history and min-max rescales).
+        # Preparing for sourcing and storing feature points      
         feature_rows = self.key_src_idx >= 0
         feature_src = torch.as_tensor(self.key_src_idx[feature_rows], device=self.pcl_tensor.device)
         samples = np.empty((len(self.keep_idx), self.num_samples), dtype=np.float32)
+
+        # Store per-risk factor distributions if enabled
         if self.publish_risk_factors:
             # Normalised [0, 1] factor values, before weighting:
             # samples == w_slope * slope + w_flatness * flatness + w_step_height * step_height
@@ -308,43 +316,56 @@ class TraversabilityAnalyzer:
             flatness_samples = np.empty_like(samples)
             step_height_samples = np.empty_like(samples)
 
+        # Loop over N iterations...
         for i in range(self.num_samples):
+            # Perturb points with LiDAR noise 
             noisy = choose_point.perturb_points_lidar(self.pcl_tensor, self.lidar_range_std, self.lidar_angular_std, self.sample_generator)
+
+            # Bootstrap each point within 20 nearest neighbours and calculate curvature and gradient
             curvatures_all, gradients_all = choose_point.bootstrap_features_gpu(noisy, self.knn_indices, self.sample_generator)
 
+            # Replace feature points with new values and interpolate onto grid
             curvatures_key = self.curvatures.copy()
             gradients_key = self.gradients.copy()
             curvatures_key[feature_rows, 0] = curvatures_all[feature_src].cpu().numpy()
             gradients_key[feature_rows, 0] = gradients_all[feature_src].cpu().numpy()
             curvatures_pred, gradients_pred = self._interp_features(curvatures_key, gradients_key)
 
+            # Build up this iteration's test inputs [x, y, curvature, gradient]
             grid = np.column_stack((self.grid_xy, curvatures_pred, gradients_pred))
             X = torch.tensor(grid, dtype=torch.float32, device=sgp_model.device)
+
+            # Extract spatial slope distribution
             mu_g, sigma_g = self._spatial_gradient_posterior(sgp_model, X)
 
-            # Cholesky in float64: Sigma_g is only 2x2 per cell, and float32 can't resolve a
-            # 1e-8 jitter against O(1e-2) entries
+            # Draw a random slope for each cell
             eye = torch.eye(2, dtype=torch.float64, device=sigma_g.device)
-            L, info = torch.linalg.cholesky_ex(sigma_g.double() + self.grad_cov_jitter * eye)
+            L, info = torch.linalg.cholesky_ex(sigma_g.double() + self.grad_cov_jitter * eye)       # Cholesky, add jitter to protect against small/0s
             if (info > 0).any():
                 print(f"[sample_traversability_distribution] Cholesky failed for {int((info > 0).sum())} cells; their gradient noise is dropped")
                 L[info > 0] = 0.0
-            z = torch.randn(len(grid), 2, 1, generator=self.sample_generator, device=L.device, dtype=torch.float64)
-            grad_sample = (mu_g.double() + (L @ z).squeeze(-1)).cpu().numpy()[self.keep_idx]
+            z = torch.randn(len(grid), 2, 1, generator=self.sample_generator, device=L.device, dtype=torch.float64)     # Draw andom number
+            grad_sample = (mu_g.double() + (L @ z).squeeze(-1)).cpu().numpy()[self.keep_idx]        # Draw sample
 
+            # Smooth out slope with Gaussian (original FSGP-BGK) or not, and normalise to [0,1]
             if self.smooth_sample_slope:
                 slope = self.analyzer.calculate_slope(grad_sample, self.max_slope, self.min_slope)
             else:
                 slope = self.analyzer.normalize_attribute(np.linalg.norm(grad_sample, axis=1), self.min_slope, self.max_slope)
+            # Smooth and normalise gradient (step_height) and curvature (flatness)
             flatness = self.analyzer.calculate_flatness_entropy(grid[self.keep_idx, 2], self.max_flatness, self.min_flatness)
             step_height = self.analyzer.calculate_step_height_topology(grid[self.keep_idx, 3], self.max_height, self.min_height)
 
+            # Compute traversability cost from weighted sum (high is bad)
             samples[:, i] = slope * self.w_slope + flatness * self.w_flatness + step_height * self.w_step_height
+
+            # Store per-risk factor samples if enabled
             if self.publish_risk_factors:
                 slope_samples[:, i] = slope
                 flatness_samples[:, i] = flatness
                 step_height_samples[:, i] = step_height
 
+        # Store per-risk factor distributions if enabled
         if self.publish_risk_factors:
             self.slope_samples = slope_samples
             self.flatness_samples = flatness_samples
@@ -352,30 +373,33 @@ class TraversabilityAnalyzer:
 
         return samples
 
+    # Compute posterior of the spatial slope (mean and covariance)
     def _spatial_gradient_posterior(self, sgp_model, X):
-        # Posterior of the spatial gradient (dz/dx, dz/dy) of the latent GP at each row of X:
-        # mean mu_g (M, 2) and covariance Sigma_g (M, 2, 2), where
-        # Sigma_g[i] = d^2 cov(a, b) / da_xy db_xy at a = b = X[i], from the posterior covariance.
-        # A and B are separate copies so the mixed derivative can be taken; the diagonal of the
-        # A-B cross block couples only A[i] with B[i], so summing it before each backward pass
-        # gives every cell's own 2x2 block at once.
+        # Prepare and copy data for calculations
         M = X.shape[0]
         A = X.clone().requires_grad_(True)
         B = X.clone().requires_grad_(True)
+
+        # Get GP posterior (contains mean and covariance)
         post = sgp_model(torch.cat([A, B]))
 
+        # Mean is derivative of the posterior mean, with respect to x and y only 
         mu_g = torch.autograd.grad(post.mean[:M].sum(), A, retain_graph=True)[0][:, :2]
-        cross = post.covariance_matrix[:M, M:].diagonal()
+
+        # Compute covariance TODO Check this 
+        cross = post.covariance_matrix[:M, M:].diagonal()       
         grad_a = torch.autograd.grad(cross.sum(), A, create_graph=True)[0]
         rows = [torch.autograd.grad(grad_a[:, d].sum(), B, retain_graph=(d == 0))[0][:, :2] for d in range(2)]
         sigma = torch.stack(rows, dim=1).detach()
-
-        # Symmetrise and clamp tiny negative eigenvalues from float32 round-off
-        sigma = 0.5 * (sigma + sigma.transpose(1, 2))
-        evals, evecs = torch.linalg.eigh(sigma)
-        sigma = evecs @ torch.diag_embed(evals.clamp_min(0)) @ evecs.transpose(1, 2)
+      
+        # Clean up covariance to make sure it is valid for Cholesky (symmetric and positive semi-definite) since it is floats
+        sigma = 0.5 * (sigma + sigma.transpose(1, 2))       # Make it symmetric (average off-diagonal pairs)
+        evals, evecs = torch.linalg.eigh(sigma)             # Eigendecomposition
+        sigma = evecs @ torch.diag_embed(evals.clamp_min(0)) @ evecs.transpose(1, 2)    # Clamp eigenvalues (no negatives) then rebuild matrix
+        
         return mu_g.detach(), sigma
 
+    # Wrapper to run traversability distribution production pipeline
     def update_map(self, pose, local_pointcloud):
         local_pointcloud = np.array(local_pointcloud)
         self.generate_local_traversability_map(pose, local_pointcloud)

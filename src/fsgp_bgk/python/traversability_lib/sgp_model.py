@@ -29,28 +29,33 @@ class SGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, inducing_points, lengthscale=0.7, alpha=10, apply_kernel_init=False):
         super(SGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
+
+        # TODO Choose a subset of training points to make it actually sparse (random or k-means) - or compute earlier with inducing_points
         inducing_variable=train_x
 
-        #gpytorch.kernels.RQKernel or gpytorch.kernels.RBFKernel
+        # Choose gpytorch.kernels.RQKernel or gpytorch.kernels.RBFKernel
+        
+        # RQKernel:
+        # Added apply_kernel_init argument to switch between new and original behaviour
         if apply_kernel_init:
-            # RQKernel's constructor silently ignores lengthscale=/alpha= kwargs (they fall into
-            # **kwargs), so set them after construction. One lengthscale per input (ARD): x, y are
-            # in metres over +-x_length/2, curvature/gradient features are O(0.1), so a shared
-            # lengthscale can't suit both.
+            # New: Properly use inputted lengthscale and alpha
+            # Currently uses same lengthscale for all 4 inputs, but lets them move separately during training
             rq_kernel = gpytorch.kernels.RQKernel(ard_num_dims=train_x.shape[-1])
-            rq_kernel.lengthscale = lengthscale
+            rq_kernel.lengthscale = lengthscale # TODO Try starting with different lengthscales: rq_kernel.lengthscale = torch.tensor([lx, ly, lc, lg])
             rq_kernel.alpha = alpha
             self.base_covar_module = gpytorch.kernels.ScaleKernel(rq_kernel)
         else:
-            # Original behaviour: lengthscale/alpha kwargs are ignored by RQKernel, so both start
-            # at GPyTorch's default (0.693) with a single shared lengthscale
+            # Original: Actually uses GPyTorch's default (0.693) with a single shared lengthscale
             self.base_covar_module = gpytorch.kernels.ScaleKernel(
                 gpytorch.kernels.RQKernel(lengthscale=torch.tensor([lengthscale, lengthscale]), alpha=torch.tensor([alpha]))
             )
+
+        # RBFKernel
         # self.base_covar_module = gpytorch.kernels.ScaleKernel(
         #     gpytorch.kernels.RBFKernel(lengthscale=torch.tensor([lengthscale, lengthscale]), alpha=torch.tensor([alpha]))
         # )
         
+        # Make GP a sparse GP
         self.covar_module = gpytorch.kernels.InducingPointKernel(self.base_covar_module, inducing_points=inducing_variable, likelihood=likelihood)
  
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

@@ -47,26 +47,56 @@ def calculate_gradients_gpu(pcl_tensor, indices):
     gradients = torch.mean(torch.abs(dz), dim=1)
     return gradients
 
+# # Added function: perturb Cartesian LiDAR points with noise from range and angular error
+# def perturb_points_lidar(pcl_tensor, sigma_r, sigma_theta, generator=None):
+#     # Range from point to sensor
+#     r = pcl_tensor.norm(dim=1, keepdim=True).clamp_min(1e-6)
+
+#     # Unit vector of beam direction
+#     u = pcl_tensor / r
+
+#     # Unit vectors e1 and e2 perpendicular to the beam and each other 
+#     ref = torch.zeros_like(u)
+#     ref[:, 2] = 1.0
+#     ref[u[:, 2].abs() > 0.999] = torch.tensor([1.0, 0.0, 0.0], device=u.device)
+#     e1 = torch.linalg.cross(u, ref)
+#     e1 = e1 / e1.norm(dim=1, keepdim=True).clamp_min(1e-9)
+#     e2 = torch.linalg.cross(u, e1)
+
+#     # 3 random draws for x, y z to add noise (range error + angular error)
+#     eps = torch.randn(pcl_tensor.shape[0], 3, generator=generator, device=pcl_tensor.device)
+#     return pcl_tensor + sigma_r * eps[:, :1] * u + r * sigma_theta * (eps[:, 1:2] * e1 + eps[:, 2:3] * e2)
+
+
+# Added function: perturb Cartesian LiDAR points with noise from range and angular error (using Barfoot, State Estimation for Robotics)
 def perturb_points_lidar(pcl_tensor, sigma_r, sigma_theta, generator=None):
-    # Sensor noise in spherical terms, sensor at the origin of pcl_tensor's frame:
-    # range error along the beam u, plus angular error displacing the point by ~r*sigma_theta
-    # in the two directions perpendicular to u. Applied once to the whole cloud per sample,
-    # before bootstrapping, so a point drawn twice carries the same measurement error.
-    r = pcl_tensor.norm(dim=1, keepdim=True).clamp_min(1e-6)
-    u = pcl_tensor / r
-    ref = torch.zeros_like(u)
-    ref[:, 2] = 1.0
-    ref[u[:, 2].abs() > 0.999] = torch.tensor([1.0, 0.0, 0.0], device=u.device)
-    e1 = torch.linalg.cross(u, ref)
-    e1 = e1 / e1.norm(dim=1, keepdim=True).clamp_min(1e-9)
-    e2 = torch.linalg.cross(u, e1)
+    # Extract x, y, z data
+    x = pcl_tensor[:, 0]
+    y = pcl_tensor[:, 1]
+    z = pcl_tensor[:, 2]
 
+    # Cartesian to spherical
+    r = pcl_tensor.norm(dim=1)
+    azimuth = torch.atan2(y, x)
+    elevation = torch.asin((z / r.clamp_min(1e-6)).clamp(-1.0, 1.0))  # Clamp: round-off can push |z/r| past 1
+
+    # Gaussian noise on range, azimuth and elevation
     eps = torch.randn(pcl_tensor.shape[0], 3, generator=generator, device=pcl_tensor.device)
-    return pcl_tensor + sigma_r * eps[:, :1] * u + r * sigma_theta * (eps[:, 1:2] * e1 + eps[:, 2:3] * e2)
+    r_noisy = r + sigma_r * eps[:, 0]
+    azimuth_noisy = azimuth + sigma_theta * eps[:, 1]
+    elevation_noisy = elevation + sigma_theta * eps[:, 2]
 
+    # Spherical back to Cartesian
+    noisy_points = torch.stack((
+        r_noisy * torch.cos(elevation_noisy) * torch.cos(azimuth_noisy),
+        r_noisy * torch.cos(elevation_noisy) * torch.sin(azimuth_noisy),
+        r_noisy * torch.sin(elevation_noisy),
+    ), dim=1)
+
+    return noisy_points
+
+# Added function: bootstrap points within nearest neighbours (resample with replacement) and compute curvature and gradient
 def bootstrap_features_gpu(pcl_tensor, indices, generator=None):
-    # Resample each point's k neighbours with replacement; curvature and gradient are both
-    # computed from the same resampled set so their dependence is kept.
     n, k = indices.shape
     draw = torch.randint(0, k, (n, k), generator=generator, device=indices.device)
     boot = indices.gather(1, draw)
@@ -108,8 +138,8 @@ def extract_features_with_classification_gpu(pcl_arr, curvature_threshold=0.1, g
         downsampled_points_extended = np.empty((0, 6))  
 
     processed_pcl = np.vstack((feature_points_with_values, downsampled_points_extended))
-    # Per output row: index into pcl_arr for feature rows, -1 for downsampled non-feature rows
-    # (those keep c = g = 0 and have no source point to recompute features from)
+
+    # Added: denotes where points are from - feature points (position in original cloud) and flat, downsampled points (-1)
     src_idx = np.concatenate((np.where(is_feature.cpu().numpy())[0], np.full(len(downsampled_points_extended), -1)))
 
     if len(processed_pcl) > target_num_points:

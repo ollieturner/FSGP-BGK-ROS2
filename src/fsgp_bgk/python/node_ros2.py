@@ -165,6 +165,15 @@ class FSGP_BGK_Node(Node):
         local_points_np = self.pointcloud2_to_xyz(self.latest_pcl)
 
         self.analyzer.update_map(self.global_pose, local_points_np)
+
+        # TODO Try this instead? 
+        # keep = self.analyzer.keep_idx
+        # grid = self.analyzer.grid[keep]
+        # mean = self.analyzer.mean[keep]
+
+        # # x, y, GP elevation mean, then the N traversability samples per cell
+        # columns = [grid[:, 0], grid[:, 1], mean, self.analyzer.traversability_samples]
+
         grid = self.analyzer.grid
         mean = self.analyzer.mean
 
