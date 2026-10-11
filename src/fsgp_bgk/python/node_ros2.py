@@ -238,7 +238,8 @@ class FSGP_BGK_Node(Node):
 
     # Edited: Interpolate sample grid into finer point cloud in map frame then publish 
     # TODO check when updating resolution
-    # - FSGP-BGK worked on 0.2m scale, but publishes here on a 0.1m scale to look smoother for planners and RViz?
+    # - Original computed on resolution (0.2m) and upsampled to publish_resolution (0.1m). Now both 0.2m, so the
+    #   publish points coincide with the grid and linear interpolation returns the cell values unchanged
     def publish_global_grid(self):
         # Skip if no pose available
         if self.global_pose is None:
@@ -256,15 +257,15 @@ class FSGP_BGK_Node(Node):
             high_res_points_global = self.high_res_points + self.global_pose[:2]
 
             # Interpolate estimate values at every find point (outside get cost 1)
-            # interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='linear', bounds_error=False, fill_value=1)
-            interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='nearest', bounds_error=False, fill_value=1)      # Changed to nearest for better retention of independence   
+            interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='linear', bounds_error=False, fill_value=1)
+            # interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='nearest', bounds_error=False, fill_value=1)      # Changed to nearest for better retention of independence   
             high_res_samples = interp_samples(high_res_points_global)
 
             # Repeated for risk factor distributions
             if self.publish_risk_factors:
                 # Unknown is NaN rather than 1 so the factors don't recombine incorrectly
-                # interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='linear', bounds_error=False, fill_value=np.nan)
-                interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='nearest', bounds_error=False, fill_value=np.nan)        # Changed to nearest for better retention of independence        
+                interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='linear', bounds_error=False, fill_value=np.nan)
+                # interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='nearest', bounds_error=False, fill_value=np.nan)        # Changed to nearest for better retention of independence        
                 high_res_factors = interp_factors(high_res_points_global)
         except Exception as e:
             self.get_logger().error(f"Interpolation failed: {e}")
