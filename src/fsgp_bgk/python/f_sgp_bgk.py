@@ -57,6 +57,10 @@ class TraversabilityAnalyzer:
         self.resolution = config["resolution"]
         self.x_length = config["x_length"]
         self.y_length = config["y_length"]
+        # Added: local grid axes (robot frame, cell centres), built once and shared with the node so its published grid
+        # uses exactly the same cells (see docs/grid_rotation_fix_plan.md)
+        self.grid_x = np.arange(-self.x_length / 2, self.x_length / 2, self.resolution, dtype='float32')
+        self.grid_y = np.arange(-self.y_length / 2, self.y_length / 2, self.resolution, dtype='float32')
 
         self.max_slope = config["max_slope"]
         self.min_slope = config["min_slope"]
@@ -150,12 +154,9 @@ class TraversabilityAnalyzer:
 
     # Build local grid, then find and store each cell's 5 nearest neighbours and their inverse-distance weights (once per frame)
     def _fit_grid_interp(self):
-        x_range = self.x_length / 2
-        y_range = self.y_length / 2
-        x_s = np.arange(-x_range, x_range, self.resolution, dtype='float32')
-        y_s = np.arange(-y_range, y_range, self.resolution, dtype='float32')
-
-        self.grid_xy = np.array(np.meshgrid(x_s, y_s)).T.reshape(-1, 2)
+        # Changed: axes built once in load_config (self.grid_x/grid_y), same values as before
+        # Row order: row = ix * len(grid_y) + iy, so reshape(nx, ny, ...) gives [ix, iy]
+        self.grid_xy = np.array(np.meshgrid(self.grid_x, self.grid_y)).T.reshape(-1, 2)
         X_train = np.column_stack((self.Xs, self.Ys))
 
         knn = NearestNeighbors(n_neighbors=5, algorithm='auto').fit(X_train)

@@ -36,7 +36,7 @@ from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
 from tf_transformations import euler_from_quaternion, quaternion_from_euler, quaternion_matrix
 import yaml
-from scipy.interpolate import RegularGridInterpolator
+# from scipy.interpolate import RegularGridInterpolator     # Not used while publish_resolution == resolution (see publish_global_grid)
 
 class FSGP_BGK_Node(Node):
     def __init__(self):
@@ -71,27 +71,42 @@ class FSGP_BGK_Node(Node):
         self.global_pose = None  
         self.latest_pcl = None  
 
-        self.grid_resolution = self.analyzer.resolution  
-        self.grid_size = (int(self.max_radius * 2 // self.grid_resolution), int(self.max_radius * 2 // self.grid_resolution))
-        self.grid_half = int(self.max_radius // self.grid_resolution)
-        
+        self.grid_resolution = self.analyzer.resolution
+        # Changed: original node grid was 24 x 24 (int(5 // 0.2), float floor) while the analyser's is 25 x 25, so cells
+        # didn't line up. Now uses the analyser's own axes (cell centres -2.5 ... 2.3 m from the robot)
+        # self.grid_size = (int(self.max_radius * 2 // self.grid_resolution), int(self.max_radius * 2 // self.grid_resolution))
+        # self.grid_half = int(self.max_radius // self.grid_resolution)
+        self.grid_x = self.analyzer.grid_x
+        self.grid_y = self.analyzer.grid_y
+        self.grid_size = (len(self.grid_x), len(self.grid_y))
+        # Map-frame offset of every published cell from the robot (axis-aligned with the map, centred on the robot)
+        self.cell_dx, self.cell_dy = np.meshgrid(self.grid_x, self.grid_y, indexing='ij')
+
+        # Publishing the grid directly needs both resolutions equal (no interpolation step anymore)
+        if not np.isclose(self.publish_resolution, self.grid_resolution):
+            raise ValueError(f"publish_resolution ({self.publish_resolution}) must equal resolution ({self.grid_resolution}); "
+                             "see docs/grid_rotation_fix_plan.md step 5")
+
         # Changed: to store per-cell traversability samples
         # - No fusion and smoothing to preserve distribution (removed log_odds etc)
-        self.global_sample_grid = np.zeros((*self.grid_size, self.num_samples), dtype=np.float32)
-        
+        # - Fully rewritten each frame (unseen cells = 1, lethal)
+        self.global_sample_grid = np.ones((*self.grid_size, self.num_samples), dtype=np.float32)
+
         # Grid for per-factor distributions for each cell, if enabled
         self.publish_risk_factors = self.analyzer.publish_risk_factors
         if self.publish_risk_factors:
-            self.global_factor_grid = np.zeros((*self.grid_size, 3 * self.num_samples), dtype=np.float32)
+            self.global_factor_grid = np.full((*self.grid_size, 3 * self.num_samples), np.nan, dtype=np.float32)
 
         # Resolution settings as original
-        self.high_res_resolution =  self.publish_resolution
-        self.high_res_half = int(self.max_radius / self.high_res_resolution)
-        self.high_res_shape = (self.high_res_half * 2, self.high_res_half * 2)
-        self.high_res_x = (np.arange(self.high_res_shape[0]) - self.high_res_half) * self.high_res_resolution
-        self.high_res_y = (np.arange(self.high_res_shape[1]) - self.high_res_half) * self.high_res_resolution
-        self.high_res_xx, self.high_res_yy = np.meshgrid(self.high_res_x, self.high_res_y, indexing='ij')
-        self.high_res_points = np.column_stack((self.high_res_xx.flatten(), self.high_res_yy.flatten()))
+        # Commented out: publish_global_grid now publishes the grid cells directly (publish_resolution == resolution).
+        # Kept for if publish_resolution is ever made finer than resolution again (would need the interpolation back)
+        # self.high_res_resolution =  self.publish_resolution
+        # self.high_res_half = int(self.max_radius / self.high_res_resolution)
+        # self.high_res_shape = (self.high_res_half * 2, self.high_res_half * 2)
+        # self.high_res_x = (np.arange(self.high_res_shape[0]) - self.high_res_half) * self.high_res_resolution
+        # self.high_res_y = (np.arange(self.high_res_shape[1]) - self.high_res_half) * self.high_res_resolution
+        # self.high_res_xx, self.high_res_yy = np.meshgrid(self.high_res_x, self.high_res_y, indexing='ij')
+        # self.high_res_points = np.column_stack((self.high_res_xx.flatten(), self.high_res_yy.flatten()))
 
         # Define subscribers to point cloud and odometry topics
         self.sph_pcl_sub = self.create_subscription(PointCloud2, self.cloud_topic, self.elevation_cb, 3)
@@ -166,8 +181,29 @@ class FSGP_BGK_Node(Node):
 
     # Note: removed observation_model since not fusing distributions
 
+    # Added: Place a robot-frame local grid into the map-aligned, robot-centred grid by inverse mapping (yaw only)
+    # - For each map cell, rotate its offset from the robot into the robot frame and take the nearest local cell
+    # - Every cell gets exactly one value each frame (no holes, duplicates or stale cells); outside the local square = fill
+    # - local_values: (nx, ny, ...) indexed [ix, iy] on the analyser's grid_x/grid_y
+    def _local_to_map_grid(self, local_values, yaw, fill):
+        # Rotate map-frame offsets into the robot frame (transpose of the robot's yaw rotation)
+        cos_yaw, sin_yaw = np.cos(yaw), np.sin(yaw)
+        lx = cos_yaw * self.cell_dx + sin_yaw * self.cell_dy
+        ly = -sin_yaw * self.cell_dx + cos_yaw * self.cell_dy
+
+        # Nearest local cell
+        ix = np.rint((lx - self.grid_x[0]) / self.grid_resolution).astype(int)
+        iy = np.rint((ly - self.grid_y[0]) / self.grid_resolution).astype(int)
+        valid = (ix >= 0) & (ix < len(self.grid_x)) & (iy >= 0) & (iy < len(self.grid_y))
+
+        # Gather values, fill cells that rotate outside the local grid
+        map_values = np.full(local_values.shape, fill, dtype=np.float32)
+        map_values[valid] = local_values[ix[valid], iy[valid]]
+        return map_values
+
     # Write frame's map from map-frame into the robot-centred grid in map frame
-    # TODO Original doesn't account for rotation? See plan for suggested improvements
+    # Not used: replaced by _local_to_map_grid (scattering with .astype(int) left holes/stale cells when rotated and
+    # mismatched the 25 vs 24 grids). Kept for reference, see docs/grid_rotation_fix_plan.md
     def update_global_grid(self, global_smpld_pcl):
         # Extract robot pose
         pose_x, pose_y = self.global_pose[0], self.global_pose[1]
@@ -214,76 +250,103 @@ class FSGP_BGK_Node(Node):
         # grid = self.analyzer.grid
         # mean = self.analyzer.mean
         keep = self.analyzer.keep_idx       # Align with length of samples
-        grid = self.analyzer.grid[keep]
-        mean = self.analyzer.mean[keep]
+        # grid = self.analyzer.grid[keep]
+        # mean = self.analyzer.mean[keep]
 
-        # Store x, y, GP elevation mean, then the N traversability samples per cell in row format
-        columns = [grid[:, 0], grid[:, 1], mean, self.analyzer.traversability_samples]
-        # Add risk factor samples per cell if enabled
+        # # Store x, y, GP elevation mean, then the N traversability samples per cell in row format
+        # columns = [grid[:, 0], grid[:, 1], mean, self.analyzer.traversability_samples]
+        # # Add risk factor samples per cell if enabled
+        # if self.publish_risk_factors:
+        #     columns += [self.analyzer.slope_samples, self.analyzer.flatness_samples, self.analyzer.step_height_samples]
+        # smpld_pcl = np.column_stack(columns)
+
+        # # Rotate and move x, y and height columns into the map frame (samples unchanged)
+        # position = np.array(self.global_pose[:3])
+        # orientation = np.array(quaternion_from_euler(*self.global_pose[3:]))
+        # global_smpld_pcl = self.transform_smpl_pcl(smpld_pcl, position, orientation)
+
+        # # Write samples into the map-aligned, robot-centred grid
+        # self.update_global_grid(global_smpld_pcl)
+
+        # Changed: replaces the transform + scatter above with inverse mapping (see docs/grid_rotation_fix_plan.md)
+        # Rebuild full local grids (nx, ny, N) on the analyser's axes; cells dropped by the uncertainty filter are NaN
+        nx, ny = self.grid_size
+        local_samples = np.full((nx * ny, self.num_samples), np.nan, dtype=np.float32)
+        local_samples[keep] = self.analyzer.traversability_samples
+        local_samples = local_samples.reshape(nx, ny, self.num_samples)
+
+        # Rotate into the map-aligned grid by yaw only (2.5D map); outside the local square and filtered cells = 1 (lethal, as original)
+        yaw = self.global_pose[5]
+        self.global_sample_grid = self._local_to_map_grid(local_samples, yaw, fill=1.0)
+        self.global_sample_grid[np.isnan(self.global_sample_grid)] = 1.0
+
+        # Same for risk factor samples if enabled (unknown stays NaN so factors don't recombine incorrectly)
         if self.publish_risk_factors:
-            columns += [self.analyzer.slope_samples, self.analyzer.flatness_samples, self.analyzer.step_height_samples]
-        smpld_pcl = np.column_stack(columns)
-
-        # Rotate and move x, y and height columns into the map frame (samples unchanged)
-        position = np.array(self.global_pose[:3])
-        orientation = np.array(quaternion_from_euler(*self.global_pose[3:]))
-        global_smpld_pcl = self.transform_smpl_pcl(smpld_pcl, position, orientation)
-
-        # Write samples into the map-aligned, robot-centred grid
-        self.update_global_grid(global_smpld_pcl)
+            local_factors = np.full((nx * ny, 3 * self.num_samples), np.nan, dtype=np.float32)
+            local_factors[keep] = np.column_stack([self.analyzer.slope_samples, self.analyzer.flatness_samples,
+                                                   self.analyzer.step_height_samples])
+            local_factors = local_factors.reshape(nx, ny, 3 * self.num_samples)
+            self.global_factor_grid = self._local_to_map_grid(local_factors, yaw, fill=np.nan)
 
         # Publish the traversability and risk factor sample grids
         self.publish_global_grid()
 
 
-    # Edited: Interpolate sample grid into finer point cloud in map frame then publish 
-    # TODO check when updating resolution
-    # - Original computed on resolution (0.2m) and upsampled to publish_resolution (0.1m). Now both 0.2m, so the
-    #   publish points coincide with the grid and linear interpolation returns the cell values unchanged
+    # Edited: Publish the sample grid as a point cloud in map frame (one point per grid cell)
+    # - Original computed on resolution (0.2m) and interpolated to publish_resolution (0.1m). Now both 0.2m, so cells
+    #   are published directly; the interpolation is commented out below (with the grid now on the analyser's axes
+    #   -2.5 ... 2.3, the old publish points -2.4 ... 2.2 would sit halfway between cells and blend samples)
     def publish_global_grid(self):
         # Skip if no pose available
         if self.global_pose is None:
             self.get_logger().warn("Global pose is not available.")
             return
 
-        # Extract the map's shape and the positions of the grid's cells
-        grid_shape = self.global_sample_grid.shape
-        low_res_x = (np.arange(grid_shape[0]) - self.grid_half) * self.grid_resolution + self.global_pose[0]
-        low_res_y = (np.arange(grid_shape[1]) - self.grid_half) * self.grid_resolution + self.global_pose[1]
+        # # Extract the map's shape and the positions of the grid's cells
+        # grid_shape = self.global_sample_grid.shape
+        # low_res_x = (np.arange(grid_shape[0]) - self.grid_half) * self.grid_resolution + self.global_pose[0]
+        # low_res_y = (np.arange(grid_shape[1]) - self.grid_half) * self.grid_resolution + self.global_pose[1]
 
-        # Interpolate to a finer grid
-        try:
-            # Extract current fine points
-            high_res_points_global = self.high_res_points + self.global_pose[:2]
+        # # Interpolate to a finer grid
+        # try:
+        #     # Extract current fine points
+        #     high_res_points_global = self.high_res_points + self.global_pose[:2]
 
-            # Interpolate estimate values at every find point (outside get cost 1)
-            interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='linear', bounds_error=False, fill_value=1)
-            # interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='nearest', bounds_error=False, fill_value=1)      # Changed to nearest for better retention of independence   
-            high_res_samples = interp_samples(high_res_points_global)
+        #     # Interpolate estimate values at every find point (outside get cost 1)
+        #     interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='linear', bounds_error=False, fill_value=1)
+        #     # interp_samples = RegularGridInterpolator((low_res_x, low_res_y), self.global_sample_grid, method='nearest', bounds_error=False, fill_value=1)      # Changed to nearest for better retention of independence
+        #     high_res_samples = interp_samples(high_res_points_global)
 
-            # Repeated for risk factor distributions
-            if self.publish_risk_factors:
-                # Unknown is NaN rather than 1 so the factors don't recombine incorrectly
-                interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='linear', bounds_error=False, fill_value=np.nan)
-                # interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='nearest', bounds_error=False, fill_value=np.nan)        # Changed to nearest for better retention of independence        
-                high_res_factors = interp_factors(high_res_points_global)
-        except Exception as e:
-            self.get_logger().error(f"Interpolation failed: {e}")
-            return
+        #     # Repeated for risk factor distributions
+        #     if self.publish_risk_factors:
+        #         # Unknown is NaN rather than 1 so the factors don't recombine incorrectly
+        #         interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='linear', bounds_error=False, fill_value=np.nan)
+        #         # interp_factors = RegularGridInterpolator((low_res_x, low_res_y), self.global_factor_grid, method='nearest', bounds_error=False, fill_value=np.nan)        # Changed to nearest for better retention of independence
+        #         high_res_factors = interp_factors(high_res_points_global)
+        # except Exception as e:
+        #     self.get_logger().error(f"Interpolation failed: {e}")
+        #     return
+
+        # Added: grid cells published directly, offsets flattened in the same [ix, iy] order as the grids
+        cell_dx = self.cell_dx.flatten()
+        cell_dy = self.cell_dy.flatten()
+        high_res_samples = self.global_sample_grid.reshape(-1, self.num_samples).copy()
+        if self.publish_risk_factors:
+            high_res_factors = self.global_factor_grid.reshape(-1, 3 * self.num_samples).copy()
 
         # Assign flat sheet height to every point - isn't used downstream
         # - Makes the costmap move at ground level below the sensor
         # - TODO Could change to make costmap follow the terrain in RViz by using mean
-        z = np.full_like(self.high_res_xx.flatten(), self.global_pose[2]) + self.analyzer.base_height
+        z = np.full_like(cell_dx, self.global_pose[2]) + self.analyzer.base_height
 
         # Points at the boundary are set to cost of 1
-        radius = np.hypot(self.high_res_xx.flatten(), self.high_res_yy.flatten())
-        edge = radius > self.max_radius - self.high_res_resolution * 2
+        radius = np.hypot(cell_dx, cell_dy)
+        edge = radius > self.max_radius - self.publish_resolution * 2
         high_res_samples[edge] = 1
 
-        # Build high resolution point cloud data
-        high_res_cloud_data = np.column_stack([self.high_res_xx.flatten() + self.global_pose[0],
-                                               self.high_res_yy.flatten() + self.global_pose[1],
+        # Build point cloud data
+        high_res_cloud_data = np.column_stack([cell_dx + self.global_pose[0],
+                                               cell_dy + self.global_pose[1],
                                                z, high_res_samples])
         
         # Assign a stamp (use same for risk factors so they are paired exactly on receiving end)
