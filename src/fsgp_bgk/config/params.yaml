@@ -10,7 +10,7 @@ obstacle_threshold: 0.5
 occupancy_threshold: 0.5  
 decay_rate: 1  
 smooth_kernel_size: 3  
-map_update_rate: 0.5 # Timer PERIOD in s (2 Hz): >= Nav2 local costmap 0.5 Hz, < lidar 10 Hz
+map_update_rate: 4.0 # Timer PERIOD in s. CPU-only compute takes ~3.8-4.2 s/frame, so 4.0 matches the real rate (>= Nav2 0.2 Hz)
 publish_resolution: 0.2 # = resolution, so publish step does not interpolate
 #keypoints
 curvature_threshold: 0.03 
