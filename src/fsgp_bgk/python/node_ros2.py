@@ -49,7 +49,7 @@ class FSGP_BGK_Node(Node):
         super().__init__('FSGP_BGK_Node')
         # Get config parameters
         # Changed: FSGP_BGK_PARAMS env var overrides the config file (set by the launch file's fsgp_params_file,
-        # used by scripts/n_convergence_study.py to vary num_samples per run)
+        # used by scripts/n_convergence/n_convergence_study.py to vary num_samples per run)
         config_path = os.environ.get('FSGP_BGK_PARAMS') or "../config/params.yaml"
         self.get_logger().info(f"Loading config from {config_path}")
 
