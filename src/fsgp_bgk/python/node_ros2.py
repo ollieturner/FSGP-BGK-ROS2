@@ -26,6 +26,7 @@ SOFTWARE.
 # - LiDAR point cloud is run through TraversabilityAnalyser (GP terrain and Monte Carlo sampling) to produce distributions
 # - Distributions placed onto grid centred on robot then published
 
+import os
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
@@ -47,8 +48,11 @@ class FSGP_BGK_Node(Node):
     def __init__(self):
         super().__init__('FSGP_BGK_Node')
         # Get config parameters
-        config_path = "../config/params.yaml"
-        
+        # Changed: FSGP_BGK_PARAMS env var overrides the config file (set by the launch file's fsgp_params_file,
+        # used by scripts/n_convergence_study.py to vary num_samples per run)
+        config_path = os.environ.get('FSGP_BGK_PARAMS') or "../config/params.yaml"
+        self.get_logger().info(f"Loading config from {config_path}")
+
         try:
             with open(config_path, "r") as file:
                 config = yaml.safe_load(file)
