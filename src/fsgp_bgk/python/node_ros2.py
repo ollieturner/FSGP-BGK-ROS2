@@ -400,10 +400,11 @@ class FSGP_BGK_Node(Node):
         # - TODO Could change to make costmap follow the terrain in RViz by using mean
         z = np.full_like(cell_dx, pose[2]) + self.analyzer.base_height
 
-        # Points at the boundary are set to cost of 1
+        # Points at the boundary are set to cost of 1 (original), or NaN when edge_lethal is off
+        # - NaN is published downstream as unknown (-1), so a global planner can plan beyond the window edge
         radius = np.hypot(cell_dx, cell_dy)
         edge = radius > self.max_radius - self.publish_resolution * 2
-        high_res_samples[edge] = 1
+        high_res_samples[edge] = 1 if self.analyzer.edge_lethal else np.nan
 
         # Build point cloud data
         high_res_cloud_data = np.column_stack([cell_dx + pose[0],

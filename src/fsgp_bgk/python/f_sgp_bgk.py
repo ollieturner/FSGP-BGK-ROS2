@@ -100,6 +100,9 @@ class TraversabilityAnalyzer:
         self.grad_cov_jitter = config["grad_cov_jitter"]
         self.smooth_sample_slope = config["smooth_sample_slope"]
         self.publish_risk_factors = config["publish_risk_factors"]
+        # Original FSGP-BGK forces the window edge (r > 2.1 m) to cost 1 (lethal); False publishes it as unknown (NaN)
+        # - Missing from older params files = original behaviour
+        self.edge_lethal = config.get("edge_lethal", True)
         if self.num_samples > 0 and self.open_pca:
             # PCA mixes the GP inputs, so columns 0/1 would no longer be x/y for the spatial gradient
             raise ValueError("num_samples > 0 requires open_pca: False")
