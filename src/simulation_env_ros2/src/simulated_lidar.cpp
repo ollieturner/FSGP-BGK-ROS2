@@ -26,6 +26,9 @@ public:
         this->declare_parameter<double>("max_range", 5.0);
         this->declare_parameter<double>("min_range", 0.1);
         this->declare_parameter<double>("noise_stddev", 0.02);
+        // Sensor mount height above base_link [m]. base_link sits on the ground, so with 0 the lidar sees flat terrain
+        // edge-on and nearly every return lands in one beam; points are still published in base_link
+        this->declare_parameter<double>("lidar_height", 0.0);
         this->declare_parameter<std::string>("robot_frame", "base_link");
         this->declare_parameter<std::string>("world_frame", "map");
         this->declare_parameter<double>("publish_rate", 10.0);
@@ -38,6 +41,7 @@ public:
         MAX_RANGE = this->get_parameter("max_range").as_double();
         MIN_RANGE = this->get_parameter("min_range").as_double();
         noise_stddev_ = this->get_parameter("noise_stddev").as_double();
+        lidar_height_ = this->get_parameter("lidar_height").as_double();
         robot_frame_ = this->get_parameter("robot_frame").as_string();
         world_frame_ = this->get_parameter("world_frame").as_string();
         double publish_rate = this->get_parameter("publish_rate").as_double();
@@ -98,6 +102,7 @@ private:
     double horizontal_resolution_;
     int num_laser_lines_;
     double noise_stddev_;
+    double lidar_height_;
     std::string robot_frame_;
     std::string world_frame_;
     double tf_lookup_timeout_;
@@ -228,7 +233,7 @@ private:
 
             const double x = point.x;
             const double y = point.y;
-            const double z = point.z;
+            const double z = point.z - lidar_height_;  // Relative to the sensor origin
             
             const double range_sq = x*x + y*y + z*z;
             if (range_sq > MAX_RANGE*MAX_RANGE || range_sq < MIN_RANGE*MIN_RANGE) continue;
@@ -268,7 +273,7 @@ private:
                     pcl::PointXYZ point;
                     point.x = range * std::cos(v_angle) * std::cos(h_angle);
                     point.y = range * std::cos(v_angle) * std::sin(h_angle);
-                    point.z = range * std::sin(v_angle);
+                    point.z = range * std::sin(v_angle) + lidar_height_;  // Back to base_link
 
                     if (isValidPoint(point)) {
                         if (enable_boundary_check_) {
