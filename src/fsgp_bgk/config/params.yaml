@@ -34,21 +34,22 @@ y_length: 5
 i_num: 15
 base_height: 0.0
 #trv
-max_slope: 0.364  # tan(20 deg): slope (|grad z|, rise / run) at which the slope factor reaches 1; absolute with level_cloud: True (was 0.8, 38.7 deg)
-min_slope: 0.0  # Change this
+# Normalisation limits (factor = 1 at max_*), from the rover's capabilities: docs/normalisation_limits_derivation.md
+max_slope: 0.268  # tan(15 deg), rover max slope; |grad z| (rise / run), absolute with level_cloud: True (was 0.8, 38.7 deg)
+min_slope: 0.0
 test_slope: 0
-max_flatness: 0.1 # Change this
-min_flatness: 0.0 # Change this
+max_flatness: 0.012 # flatness feature over 14 cm rocks (MoonRanger belly-strike high risk), calibrated 2026-10-23 (was 0.1)
+min_flatness: 0.0
 test_flatness: 0
-max_height: 0.1 # Change this
-min_height: 0.0 # Change this
+max_height: 0.032 # step-height feature at a 10 cm step (MoonRanger wheel high risk), calibrated 2026-10-23 (was 0.1)
+min_height: 0.0
 test_height: 0
 max_uncertainty: 1.6 # Change this
 min_uncertainty: 0.64 # Change this
 test_uncertainty: 0
-w_slope: 0.3 # Change this
+w_slope: 0.4  # Change this
 w_flatness: 0.3 # Change this
-w_step_height: 0.2 # Change this
+w_step_height: 0.3 # Change this
 time_window: 600 # Change this
 max_history_frames: 3
 bgk_threshold: 0.8
