@@ -65,3 +65,5 @@ publish_risk_factors: True # False # also store + publish slope/flatness/step-he
 publish_raw_risk_factors: False # also publish each factor's value before normalisation (after smoothing) on /risk_factor_raw_pcl (complete_map_planning.py turns it on for its survey)
 edge_lethal: False          # True = original: window edge (r > 2.1 m) and corners published as cost 1 (lethal); False = unknown (NaN -> -1 downstream) so a global planner can plan beyond the edge
 level_cloud: True           # rotate each cloud by the robot's roll / pitch first, so slope is against gravity; False = original (relative to the robot's body, which the simulator tilts to the ground)
+robot_points_in_features: False  # True = original: robot points (curvature / gradient 0) in the feature interpolation; False = real key points only (docs/lidar_robot_points_coverage_plan.md, set 2026-10-23)
+robot_points_extent: 0.44   # side of the robot-point square [m]; 0 = whole window (original); 0.44 = footprint (2 x robot_radius 0.22, set 2026-10-23)

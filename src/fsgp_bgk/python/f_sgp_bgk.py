@@ -110,6 +110,12 @@ class TraversabilityAnalyzer:
         # rather than relative to the robot's body (the simulator tilts the robot to the ground under it)
         # - Missing from older params files = original behaviour (robot body frame)
         self.level_cloud = config.get("level_cloud", False)
+        # Added: robot points (flat-ground prior, curvature / gradient 0) in the curvature / gradient interpolation;
+        # False = interpolate the features from the real key points only (robot points stay in the GP training)
+        # - Missing from older params files = original behaviour (included)
+        self.robot_points_in_features = config.get("robot_points_in_features", True)
+        # Added: side of the square of robot points [m]; 0 = the whole window (original), e.g. the footprint
+        self.robot_points_extent = config.get("robot_points_extent", 0.0)
         if self.num_samples > 0 and self.open_pca:
             # PCA mixes the GP inputs, so columns 0/1 would no longer be x/y for the spatial gradient
             raise ValueError("num_samples > 0 requires open_pca: False")
@@ -172,6 +178,11 @@ class TraversabilityAnalyzer:
         # Row order: row = ix * len(grid_y) + iy, so reshape(nx, ny, ...) gives [ix, iy]
         self.grid_xy = np.array(np.meshgrid(self.grid_x, self.grid_y)).T.reshape(-1, 2)
         X_train = np.column_stack((self.Xs, self.Ys))
+        # Added: without robot points (robot_points_in_features False), fit on the key points only; they are the first
+        # rows of the training data, so the neighbour indices still index the full curvature / gradient arrays
+        # (falls back to every point if there are fewer than 5 key points)
+        if not self.robot_points_in_features and len(self.keypoints) >= 5:
+            X_train = X_train[:len(self.keypoints)]
 
         knn = NearestNeighbors(n_neighbors=5, algorithm='auto').fit(X_train)
         distances, self.grid_knn_idx = knn.kneighbors(self.grid_xy)
@@ -251,7 +262,9 @@ class TraversabilityAnalyzer:
         )
 
         self.keypoints = key_points
-        robot_points = self.generate_robot_points(self.x_length, self.y_length) # TODO Try with smaller grid around robot
+        # Changed: robot_points_extent > 0 limits the robot points to that square (e.g. the footprint); 0 = whole window
+        extent = self.robot_points_extent
+        robot_points = self.generate_robot_points(extent or self.x_length, extent or self.y_length)
         # Added: the flat-ground prior lies in the robot's body plane (on the ground under it), so level it with the cloud
         if level is not None:
             robot_points[:, :3] = robot_points[:, :3] @ level.T
