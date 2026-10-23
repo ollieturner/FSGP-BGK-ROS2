@@ -1,0 +1,53 @@
+{
+  "dataset": "/home/oliver/Documents/AMME4112/AMME4112_risk_aware_rover/lusnar_data/Moon_8",
+  "output": "/home/oliver/Documents/AMME4112/AMME4112_risk_aware_rover/src/fsgp_bgk/src/simulation_env_ros2/PCD/lusnar_moon8.pcd",
+  "frame_note": "pcd = (x_world - xy_offset[0], y_world - xy_offset[1], -z_world - z_offset); x_world/y_world/z_world in the LuSNAR LiDAR pose frame (z-down), XY shared with gt.txt",
+  "xy_offset": [
+    72.0,
+    -145.0
+  ],
+  "z_offset": -0.2327183037996292,
+  "tile_size": 12.0,
+  "params": {
+    "voxel": 0.05,
+    "min_range": 1.5,
+    "max_range": 20.0,
+    "scan_stride": 1,
+    "rock_target": 0.02,
+    "rock_weight": 0.5,
+    "relief_target": 0.1,
+    "relief_weight": 1.0
+  },
+  "tile_candidates": null,
+  "scans_used": 243,
+  "holdout_scan": 1693502099315970304,
+  "raw_points": 807094,
+  "points": 60143,
+  "rock_points": 13840,
+  "labels": {
+    "-1": 46303,
+    "174": 13840
+  },
+  "extent_min": [
+    -5.999656677246094,
+    -5.998504638671875,
+    0.0
+  ],
+  "extent_max": [
+    5.9834184646606445,
+    5.998390197753906,
+    1.8933045119047165
+  ],
+  "coverage": 0.9809027777777778,
+  "registration_check": {
+    "median": 0.019555519393367624,
+    "p90": 0.028074144445341457,
+    "n": 8625,
+    "matched_frac": 1.0
+  },
+  "height_above_ground": {
+    "174": 0.32069747650788893
+  },
+  "start_ground_points": 82,
+  "start_ground_z_std": 0.003937535689714726
+}

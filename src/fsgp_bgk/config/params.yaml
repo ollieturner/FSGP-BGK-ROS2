@@ -4,7 +4,7 @@ odom_topic: '/odom'
 global_link: 'map'  
 #map
 max_cloud_height: 0.5  
-downsampl_voxel_size: 0.3 
+downsampl_voxel_size: 0.2 
 binarization_condition: True 
 obstacle_threshold: 0.5 
 occupancy_threshold: 0.5  
@@ -13,25 +13,26 @@ smooth_kernel_size: 3
 map_update_rate: 4.0 # Timer PERIOD in s. CPU-only compute takes ~3.8-4.2 s/frame, so 4.0 matches the real rate (>= Nav2 0.2 Hz)
 publish_resolution: 0.2 # = resolution, so publish step does not interpolate
 #keypoints
-curvature_threshold: 0.03 
-gradient_threshold: 0.03
+curvature_threshold: 0 
+gradient_threshold: 0
 key_voxel_size: 0.1 
 inducing_points: 500 
 #hyperparameters
 open_pca: False
 lengthscale: 0.1  # only used if apply_kernel_init: True (initial value for every input's lengthscale, ARD)
 alpha: 10         # only used if apply_kernel_init: True (initial RQ alpha)
-apply_kernel_init: False  # False = original behaviour: RQKernel ignores lengthscale/alpha, both start at 0.693
-gp_train_iters: 1   # AdamW steps on the marginal likelihood per frame (original: 1)
-gp_lr: 0.01         # original: 0.01
-gp_noise_init: -1   # initial GP likelihood noise variance [m^2], still trained; -1 = GPyTorch default (0.693).
-                    # e.g. 0.0004 = lidar_range_std^2
+apply_kernel_init: True  # False = original behaviour: RQKernel ignores lengthscale/alpha, both start at 0.693
+gp_train_iters: 50  # AdamW steps on the marginal likelihood per frame (original: 1)
+gp_lr: 0.1          # original: 0.01
+gp_noise_init: 0.0004  # initial GP likelihood noise variance [m^2], still trained; -1 = GPyTorch default (0.693).
+                    # 0.0004 = lidar_range_std^2. These four GP settings chosen 2026-10-23 (docs/map_variability_action_plan.md,
+                    # item 8): ~3 s/frame on LuSNAR, over the 4 s map_update_rate in forest
 #base
 resolution: 0.2
 x_length: 5 
 y_length: 5 
 i_num: 15
-base_height: -0.15
+base_height: 0.0
 #trv
 max_slope: 0.8  # Change this 
 min_slope: 0.0  # Change this
