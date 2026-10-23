@@ -125,6 +125,10 @@ class FSGP_BGK_Node(Node):
         self.publish_risk_factors = self.analyzer.publish_risk_factors
         if self.publish_risk_factors:
             self.global_factor_grid = np.full((*self.grid_size, 3 * self.num_samples), np.nan, dtype=np.float32)
+        # Added: same for the raw (pre-normalisation) factor values, if enabled
+        self.publish_raw_risk_factors = self.analyzer.publish_raw_risk_factors
+        if self.publish_raw_risk_factors:
+            self.global_raw_factor_grid = np.full((*self.grid_size, 3 * self.num_samples), np.nan, dtype=np.float32)
 
         # Resolution settings as original
         # Commented out: publish_global_grid now publishes the grid cells directly (publish_resolution == resolution).
@@ -147,6 +151,8 @@ class FSGP_BGK_Node(Node):
         self.traversability_pcl_ldd_pub = self.create_publisher(PointCloud2, "traversability_pcl_ldd", 3)
         if self.publish_risk_factors:
             self.risk_factor_pcl_pub = self.create_publisher(PointCloud2, "risk_factor_pcl", 3)
+        if self.publish_raw_risk_factors:
+            self.risk_factor_raw_pcl_pub = self.create_publisher(PointCloud2, "risk_factor_raw_pcl", 3)
 
         self.map_timer = self.create_timer(self.map_update_rate, self.map_thread, callback_group=self.map_group)
 
@@ -165,6 +171,15 @@ class FSGP_BGK_Node(Node):
         if self.publish_risk_factors:
             self.factor_fields = self.fields[:3] + [
                 PointField(name=f'{name}_{i}', offset=12 + 4 * (block * self.num_samples + i),
+                           datatype=PointField.FLOAT32, count=1)
+                for block, name in enumerate(('slope', 'flat', 'step'))
+                for i in range(self.num_samples)
+            ]
+        # Added: risk_factor_raw_pcl: x, y, z, then slope_raw_i, flat_raw_i, step_raw_i (factor values before normalisation,
+        # NaN = no factor data); same stamp and point order as traversability_pcl_ldd
+        if self.publish_raw_risk_factors:
+            self.raw_factor_fields = self.fields[:3] + [
+                PointField(name=f'{name}_raw_{i}', offset=12 + 4 * (block * self.num_samples + i),
                            datatype=PointField.FLOAT32, count=1)
                 for block, name in enumerate(('slope', 'flat', 'step'))
                 for i in range(self.num_samples)
@@ -347,6 +362,12 @@ class FSGP_BGK_Node(Node):
                                                    self.analyzer.step_height_samples])
             local_factors = local_factors.reshape(nx, ny, 3 * self.num_samples)
             self.global_factor_grid = self._local_to_map_grid(local_factors, yaw, fill=np.nan)
+        if self.publish_raw_risk_factors:
+            local_raw = np.full((nx * ny, 3 * self.num_samples), np.nan, dtype=np.float32)
+            local_raw[keep] = np.column_stack([self.analyzer.slope_raw_samples, self.analyzer.flatness_raw_samples,
+                                               self.analyzer.step_height_raw_samples])
+            local_raw = local_raw.reshape(nx, ny, 3 * self.num_samples)
+            self.global_raw_factor_grid = self._local_to_map_grid(local_raw, yaw, fill=np.nan)
 
         # Publish the traversability and risk factor sample grids (at the cloud's pose, stamped with its capture time)
         self.publish_global_grid(pose, stamp)
@@ -422,6 +443,13 @@ class FSGP_BGK_Node(Node):
             high_res_factors[edge] = np.nan
             high_res_factor_data = np.column_stack([high_res_cloud_data[:, :3], high_res_factors])
             self.risk_factor_pcl_pub.publish(pc2.create_cloud(self.header, self.factor_fields, high_res_factor_data))
+
+        # Publish raw risk factor data if enabled (edge NaN, as for the normalised factors)
+        if self.publish_raw_risk_factors:
+            high_res_raw = self.global_raw_factor_grid.reshape(-1, 3 * self.num_samples).copy()
+            high_res_raw[edge] = np.nan
+            high_res_raw_data = np.column_stack([high_res_cloud_data[:, :3], high_res_raw])
+            self.risk_factor_raw_pcl_pub.publish(pc2.create_cloud(self.header, self.raw_factor_fields, high_res_raw_data))
 
     # Added: robot pose [x, y, z, roll, pitch, yaw] in the map frame at a stamp, from TF (same format as odom_cb)
     # - Returns (pose, transform stamp), or (None, None) if TF doesn't cover the stamp yet (frame is skipped)

@@ -100,6 +100,9 @@ class TraversabilityAnalyzer:
         self.grad_cov_jitter = config["grad_cov_jitter"]
         self.smooth_sample_slope = config["smooth_sample_slope"]
         self.publish_risk_factors = config["publish_risk_factors"]
+        # Added: also keep each factor's raw value before normalisation (after any smoothing), for /risk_factor_raw_pcl
+        # - Missing from older params files = off
+        self.publish_raw_risk_factors = config.get("publish_raw_risk_factors", False)
         # Original FSGP-BGK forces the window edge (r > 2.1 m) to cost 1 (lethal); False publishes it as unknown (NaN)
         # - Missing from older params files = original behaviour
         self.edge_lethal = config.get("edge_lethal", True)
@@ -149,6 +152,10 @@ class TraversabilityAnalyzer:
         self.slope_samples = None
         self.flatness_samples = None
         self.step_height_samples = None
+        # Raw (pre-normalisation) factor values, only built when publish_raw_risk_factors is set
+        self.slope_raw_samples = None
+        self.flatness_raw_samples = None
+        self.step_height_raw_samples = None
 
     # Add column of 1s to LiDAR point cloud (x, y, z)
     def fake_intensity(self, pcl, num_points):
@@ -319,6 +326,11 @@ class TraversabilityAnalyzer:
             slope_samples = np.empty_like(samples)
             flatness_samples = np.empty_like(samples)
             step_height_samples = np.empty_like(samples)
+        # Raw factor values (the inputs to normalize_attribute) if enabled
+        if self.publish_raw_risk_factors:
+            slope_raw_samples = np.empty_like(samples)
+            flatness_raw_samples = np.empty_like(samples)
+            step_height_raw_samples = np.empty_like(samples)
 
         # Loop over N iterations...
         for i in range(self.num_samples):
@@ -369,11 +381,24 @@ class TraversabilityAnalyzer:
                 flatness_samples[:, i] = flatness
                 step_height_samples[:, i] = step_height
 
+            # Store raw factor values if enabled: the same smoothing as the calls above, without normalising
+            # (calculate_slope / calculate_flatness_entropy / calculate_step_height_topology in traversability.py)
+            if self.publish_raw_risk_factors:
+                grad_raw = (self.analyzer.preprocess_data(grad_sample, method="gaussian", sigma=1.0)
+                            if self.smooth_sample_slope else grad_sample)
+                slope_raw_samples[:, i] = np.linalg.norm(grad_raw, axis=1)
+                flatness_raw_samples[:, i] = self.analyzer.preprocess_data(grid[self.keep_idx, 2], method="gaussian", sigma=0.5)
+                step_height_raw_samples[:, i] = self.analyzer.preprocess_data(grid[self.keep_idx, 3], method="gaussian", sigma=0.5)
+
         # Store per-risk factor distributions if enabled
         if self.publish_risk_factors:
             self.slope_samples = slope_samples
             self.flatness_samples = flatness_samples
             self.step_height_samples = step_height_samples
+        if self.publish_raw_risk_factors:
+            self.slope_raw_samples = slope_raw_samples
+            self.flatness_raw_samples = flatness_raw_samples
+            self.step_height_raw_samples = step_height_raw_samples
 
         return samples
 
