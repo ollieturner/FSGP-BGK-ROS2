@@ -106,6 +106,10 @@ class TraversabilityAnalyzer:
         # Original FSGP-BGK forces the window edge (r > 2.1 m) to cost 1 (lethal); False publishes it as unknown (NaN)
         # - Missing from older params files = original behaviour
         self.edge_lethal = config.get("edge_lethal", True)
+        # Added: rotate each cloud by the robot's roll / pitch before analysis, so slope is against gravity (absolute)
+        # rather than relative to the robot's body (the simulator tilts the robot to the ground under it)
+        # - Missing from older params files = original behaviour (robot body frame)
+        self.level_cloud = config.get("level_cloud", False)
         if self.num_samples > 0 and self.open_pca:
             # PCA mixes the GP inputs, so columns 0/1 would no longer be x/y for the spatial gradient
             raise ValueError("num_samples > 0 requires open_pca: False")
@@ -212,10 +216,25 @@ class TraversabilityAnalyzer:
         
         return np.column_stack((x, y, z, i, c, g))
 
+    # Added: rotation from the robot's body frame to a gravity-levelled frame that keeps its yaw
+    # - pose = [x, y, z, roll, pitch, yaw] (euler_from_quaternion, sxyz: R = Rz(yaw) Ry(pitch) Rx(roll)), so the
+    #   levelling part is Ry(pitch) Rx(roll); the grid stays robot-centred with the robot's yaw, as node_ros2 assumes
+    @staticmethod
+    def level_rotation(pose):
+        roll, pitch = pose[3], pose[4]
+        cr, sr, cp, sp = np.cos(roll), np.sin(roll), np.cos(pitch), np.sin(pitch)
+        rot_x = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
+        rot_y = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
+        return rot_y @ rot_x
+
     # Generate the traversability distributions (and per-factor when enabled) for the local costmap (some changes here compared to FSGP-BGK)
     def generate_local_traversability_map(self, pose, transformed_points):
         # Extract pose and point cloud
         self.pose = pose
+        # Added: level the cloud by the robot's roll / pitch (level_cloud), so everything below is against gravity
+        level = self.level_rotation(pose) if self.level_cloud else None
+        if level is not None:
+            transformed_points = np.asarray(transformed_points)[:, :3] @ level.T
         # start_time = time.time()
         expanded_pcl = self.fake_intensity(transformed_points, 5000)
         expanded_pcl = point_cloud_tool.voxel_downsample(expanded_pcl, voxel_size=self.downsampl_voxel_size)
@@ -233,6 +252,9 @@ class TraversabilityAnalyzer:
 
         self.keypoints = key_points
         robot_points = self.generate_robot_points(self.x_length, self.y_length) # TODO Try with smaller grid around robot
+        # Added: the flat-ground prior lies in the robot's body plane (on the ground under it), so level it with the cloud
+        if level is not None:
+            robot_points[:, :3] = robot_points[:, :3] @ level.T
         key_points = np.vstack((key_points, robot_points))
         # Index in pcl_tensor if a feature point, -1 otherwise (non-feature point (c=g=0) or robot point). Used in sampling loop
         self.key_src_idx = np.concatenate((key_src_idx, np.full(len(robot_points), -1)))
