@@ -53,6 +53,16 @@ class TraversabilityAnalyzer:
         self.gp_train_iters = config["gp_train_iters"]
         self.gp_lr = config["gp_lr"]
         self.gp_noise_init = config["gp_noise_init"]
+        # Added (docs/gp_review_plan.md); missing from older params files = original behaviour
+        # - gp_lengthscale_max: per-input upper bounds [x, y, curvature, gradient] (null entries = unbounded), with
+        #   apply_kernel_init; lengthscale may also be a per-input list
+        # - gp_warm_start: start each frame's GP from the previous frame's hyperparameters and train gp_train_iters_warm
+        # - gp_train_tol: stop training early once the loss improves by less than this per iteration (0 = off)
+        self.gp_lengthscale_max = config.get("gp_lengthscale_max", None)
+        self.gp_warm_start = config.get("gp_warm_start", False)
+        self.gp_train_iters_warm = config.get("gp_train_iters_warm", self.gp_train_iters)
+        self.gp_train_tol = config.get("gp_train_tol", 0.0)
+        self._gp_hyperparameters = None     # Previous frame's trained hyperparameters (warm start)
 
         self.resolution = config["resolution"]
         self.x_length = config["x_length"]
@@ -298,24 +308,46 @@ class TraversabilityAnalyzer:
         if self.gp_noise_init > 0:
             likelihood.noise = self.gp_noise_init
         # Build GP model (see file for description)
-        sgp_model = SGPModel(d_in, d_out, likelihood, self.inducing_points, self.lengthscale, self.alpha, self.apply_kernel_init).to(self.device)
+        sgp_model = SGPModel(d_in, d_out, likelihood, self.inducing_points, self.lengthscale, self.alpha, self.apply_kernel_init,
+                             lengthscale_max=self.gp_lengthscale_max).to(self.device)
+
+        # Added: warm start from the previous frame's hyperparameters (not the inducing points, which follow the data)
+        self.gp_warm_used = False
+        if self.gp_warm_start and self._gp_hyperparameters is not None:
+            for name, param in sgp_model.named_parameters():
+                saved = self._gp_hyperparameters.get(name)
+                if saved is not None and saved.shape == param.shape:
+                    param.data.copy_(saved)
+            self.gp_warm_used = True
+        train_iters = self.gp_train_iters_warm if self.gp_warm_used else self.gp_train_iters
 
         # start_time = time.time()
         # Put GP into training mode (return prior not predictions)
         sgp_model.train()
         likelihood.train()
-        optimizer = torch.optim.AdamW(sgp_model.parameters(), lr=self.gp_lr)            # Create optimiser 
+        optimizer = torch.optim.AdamW(sgp_model.parameters(), lr=self.gp_lr)            # Create optimiser
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, sgp_model)           # Setup training objective (how probable observed heights are under the GP)
 
         # Put into loop (compared to original) for more training iterations
         self.gp_loss_history = []
-        for _ in range(self.gp_train_iters):
+        for _ in range(train_iters):
             optimizer.zero_grad()
             output = sgp_model(d_in)                # GP prior over training points
             loss = -mll(output, d_out).mean()       # Negative score from objective (lower is better)
             loss.backward()                         # How each setting should change to minimise loss
             optimizer.step()                        # Iterate (push) settings to minimise loss
             self.gp_loss_history.append(loss.item())
+            # Added: early stop once the loss has stopped improving (gp_train_tol > 0): after at least 5 iterations,
+            # when each of the last 3 iterations improved it by less than gp_train_tol
+            hist = self.gp_loss_history
+            if self.gp_train_tol > 0 and len(hist) >= 5 and \
+                    all(hist[i - 1] - hist[i] < self.gp_train_tol for i in range(len(hist) - 3, len(hist))):
+                break
+
+        # Added: keep the trained hyperparameters for the next frame's warm start
+        if self.gp_warm_start:
+            self._gp_hyperparameters = {name: param.detach().clone() for name, param in sgp_model.named_parameters()
+                                        if 'inducing_points' not in name}
 
         # Switch to prediction mode (return posterior/prediction)
         sgp_model.eval()

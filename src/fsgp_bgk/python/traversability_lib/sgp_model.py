@@ -26,7 +26,10 @@ import torch
 import gpytorch
 
 class SGPModel(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, inducing_points, lengthscale=0.7, alpha=10, apply_kernel_init=False):
+    # Added: lengthscale may be one value (all inputs) or one per input [x, y, curvature, gradient];
+    # lengthscale_max: optional per-input upper bounds (None or a None entry = unbounded), apply_kernel_init only
+    def __init__(self, train_x, train_y, likelihood, inducing_points, lengthscale=0.7, alpha=10, apply_kernel_init=False,
+                 lengthscale_max=None):
         super(SGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
 
@@ -39,9 +42,17 @@ class SGPModel(gpytorch.models.ExactGP):
         # Added apply_kernel_init argument to switch between new and original behaviour
         if apply_kernel_init:
             # New: Properly use inputted lengthscale and alpha
-            # Currently uses same lengthscale for all 4 inputs, but lets them move separately during training
-            rq_kernel = gpytorch.kernels.RQKernel(ard_num_dims=train_x.shape[-1])
-            rq_kernel.lengthscale = lengthscale # TODO Try starting with different lengthscales: rq_kernel.lengthscale = torch.tensor([lx, ly, lc, lg])
+            # One lengthscale per input (ARD), each starting at its given value and moving separately during training
+            n_dims = train_x.shape[-1]
+            init = torch.as_tensor(lengthscale, dtype=torch.float32).expand(n_dims).clone()
+            constraint = None
+            if lengthscale_max is not None:
+                # Upper bounds per input (unbounded = 1e4); the starting value must lie inside the bound
+                upper = torch.tensor([1e4 if m is None else float(m) for m in lengthscale_max], dtype=torch.float32)
+                constraint = gpytorch.constraints.Interval(torch.full_like(upper, 1e-4), upper)
+                init = torch.minimum(init, 0.95 * upper)
+            rq_kernel = gpytorch.kernels.RQKernel(ard_num_dims=n_dims, lengthscale_constraint=constraint)
+            rq_kernel.lengthscale = init.reshape(1, n_dims)
             rq_kernel.alpha = alpha
             self.base_covar_module = gpytorch.kernels.ScaleKernel(rq_kernel)
         else:
