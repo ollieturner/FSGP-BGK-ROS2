@@ -38,10 +38,10 @@ base_height: 0.0
 max_slope: 0.268  # tan(15 deg), rover max slope; |grad z| (rise / run), absolute with level_cloud: True (was 0.8, 38.7 deg)
 min_slope: 0.0
 test_slope: 0
-max_flatness: 0.012 # flatness feature over 14 cm rocks (MoonRanger belly-strike high risk), calibrated 2026-10-23 (was 0.1)
+max_flatness: 0.013 # flatness feature on 14 cm rocks (MoonRanger belly-strike high risk), on-rock cells, correct lidar, 2026-10-24 (results/limit_calibration_v2; was 0.0135 diluted mask, 0.012 stale lidar, 0.1 original)
 min_flatness: 0.0
 test_flatness: 0
-max_height: 0.032 # step-height feature at a 10 cm step (MoonRanger wheel high risk), calibrated 2026-10-23 (was 0.1)
+max_height: 0.045 # step-height feature on the edge of a 10 cm step (MoonRanger wheel high risk), correct lidar, 2026-10-24 (results/limit_calibration_v2; was 0.0385 diluted mask, 0.032 stale lidar, 0.1 original)
 min_height: 0.0
 test_height: 0
 max_uncertainty: 1.6 # Change this
