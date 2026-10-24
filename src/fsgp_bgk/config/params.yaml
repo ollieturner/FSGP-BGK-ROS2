@@ -10,7 +10,7 @@ obstacle_threshold: 0.5
 occupancy_threshold: 0.5  
 decay_rate: 1  
 smooth_kernel_size: 3  
-map_update_rate: 4.0 # Timer PERIOD in s. CPU-only compute takes ~3.8-4.2 s/frame, so 4.0 matches the real rate (>= Nav2 0.2 Hz)
+map_update_rate: 5.0 # Timer PERIOD in s (a map every 5 s; not a timeout). With the warm start and i_num 7, warm frames take ~3.4 s (max ~3.9 s, offline), cold first frame ~4.8 s (docs/gp_review_plan.md); Nav2 local costmap update_frequency 0.2 Hz = 1 / 5 s. Was 4.0
 publish_resolution: 0.2 # = resolution, so publish step does not interpolate
 #keypoints
 curvature_threshold: 0 
@@ -26,12 +26,14 @@ gp_train_iters: 50  # AdamW steps on the marginal likelihood per frame (original
 gp_lr: 0.1          # original: 0.01
 gp_noise_init: 0.0004  # initial GP likelihood noise variance [m^2], still trained; -1 = GPyTorch default (0.693).
                     # 0.0004 = lidar_range_std^2. These four GP settings chosen 2026-10-23 (docs/map_variability_action_plan.md,
-                    # item 8): ~3 s/frame on LuSNAR, over the 4 s map_update_rate in forest
+                    # item 8); gp_train_iters is the first (cold) frame's training once the warm start is on
+gp_warm_start: True       # start each frame's GP from the previous frame's hyperparameters (docs/gp_review_plan.md); False = original
+gp_train_iters_warm: 5    # training iterations on warm frames (fewer carried more across frames than 10 or 20)
 #base
 resolution: 0.2
 x_length: 5 
 y_length: 5 
-i_num: 15
+i_num: 7  # robot points per side (7 x 7 = 49 over robot_points_extent); was 15 (225). Faster GP, features unchanged (docs/gp_review_plan.md)
 base_height: 0.0
 #trv
 # Normalisation limits (factor = 1 at max_*), from the rover's capabilities: docs/normalisation_limits_derivation.md
