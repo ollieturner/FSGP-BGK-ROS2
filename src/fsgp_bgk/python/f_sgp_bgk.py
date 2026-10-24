@@ -114,8 +114,11 @@ class TraversabilityAnalyzer:
         # False = interpolate the features from the real key points only (robot points stay in the GP training)
         # - Missing from older params files = original behaviour (included)
         self.robot_points_in_features = config.get("robot_points_in_features", True)
-        # Added: side of the square of robot points [m]; 0 = the whole window (original), e.g. the footprint
-        self.robot_points_extent = config.get("robot_points_extent", 0.0)
+        # Added: extent of the robot points [m], e.g. the footprint: [length (x, forward), width (y)], or one value for a
+        # square; 0 = the whole window (original)
+        extent = config.get("robot_points_extent", 0.0)
+        length, width = (extent, extent) if np.isscalar(extent) else (float(extent[0]), float(extent[1]))
+        self.robot_points_size = (length or self.x_length, width or self.y_length)
         if self.num_samples > 0 and self.open_pca:
             # PCA mixes the GP inputs, so columns 0/1 would no longer be x/y for the spatial gradient
             raise ValueError("num_samples > 0 requires open_pca: False")
@@ -262,9 +265,8 @@ class TraversabilityAnalyzer:
         )
 
         self.keypoints = key_points
-        # Changed: robot_points_extent > 0 limits the robot points to that square (e.g. the footprint); 0 = whole window
-        extent = self.robot_points_extent
-        robot_points = self.generate_robot_points(extent or self.x_length, extent or self.y_length)
+        # Changed: robot points over robot_points_extent (e.g. the footprint) instead of the whole window when set
+        robot_points = self.generate_robot_points(*self.robot_points_size)
         # Added: the flat-ground prior lies in the robot's body plane (on the ground under it), so level it with the cloud
         if level is not None:
             robot_points[:, :3] = robot_points[:, :3] @ level.T
