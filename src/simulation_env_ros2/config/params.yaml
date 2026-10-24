@@ -8,9 +8,9 @@ simulation_node:
 
     # Robot model
     mesh_resource: "package://simulation_env/meshes/robot.dae"
-    mesh_scale: 0.0005
-    mesh_offset_x: -0.15
-    mesh_offset_y: -0.16
+    mesh_scale: 0.001     # robot.dae is in mm (629 x 580 x 225), so 0.001 = real size (rover 612 x 580 x 245 mm); was 0.0005 (half size)
+    mesh_offset_x: -0.326 # mesh origin is at a corner: -(bounding-box centre) at scale 0.001, so the model is centred on the pose (was -0.15)
+    mesh_offset_y: -0.315 # (was -0.16)
 
     # Control
     max_linear_vel: 1.0
