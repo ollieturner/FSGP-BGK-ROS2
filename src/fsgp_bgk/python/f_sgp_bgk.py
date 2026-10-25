@@ -59,6 +59,16 @@ class TraversabilityAnalyzer:
         # - gp_warm_start: start each frame's GP from the previous frame's hyperparameters and train gp_train_iters_warm
         # - gp_train_tol: stop training early once the loss improves by less than this per iteration (0 = off)
         self.gp_lengthscale_max = config.get("gp_lengthscale_max", None)
+        # Added (docs/gp_rock_lengthscale_plan.md); null / missing = original behaviour
+        # - gp_lengthscale_min: per-input lower bounds [x, y, curvature, gradient] (null entries = unbounded)
+        # - gp_fit_max_gradient: leave key points whose gradient feature (mean |dz| to the k neighbours, the step-height
+        #   input) is above this out of the GP height fit, so rocks / step edges don't set the ground surface's
+        #   lengthscale. The features (step height, flatness) still use every key point
+        # - gp_fit_max_curvature: the same on the curvature feature (the flatness input; deviation from a local plane,
+        #   so unlike the gradient feature it doesn't rise on steep but smooth ground)
+        self.gp_lengthscale_min = config.get("gp_lengthscale_min", None)
+        self.gp_fit_max_gradient = config.get("gp_fit_max_gradient", None)
+        self.gp_fit_max_curvature = config.get("gp_fit_max_curvature", None)
         self.gp_warm_start = config.get("gp_warm_start", False)
         self.gp_train_iters_warm = config.get("gp_train_iters_warm", self.gp_train_iters)
         self.gp_train_tol = config.get("gp_train_tol", 0.0)
@@ -299,8 +309,18 @@ class TraversabilityAnalyzer:
             grid_train=self.pca.fit_transform(data)
         else:
             grid_train=data
-        d_in = torch.tensor(grid_train, dtype=torch.float32, device=self.device)
-        d_out = torch.tensor(self.Zs, dtype=torch.float32, device=self.device).squeeze()
+        # Added: GP fit on the low-gradient / low-curvature points only (gp_fit_max_*); robot points have both 0 and stay
+        fit = np.ones(len(self.Zs), dtype=bool)
+        if self.gp_fit_max_gradient:
+            fit &= self.gradients[:, 0] <= self.gp_fit_max_gradient
+        if self.gp_fit_max_curvature:
+            fit &= self.curvatures[:, 0] <= self.gp_fit_max_curvature
+        if self.gp_fit_max_gradient or self.gp_fit_max_curvature:
+            if fit.sum() < 10:      # Hardly any ground: fall back on every point
+                fit[:] = True
+        self.gp_fit_points = int(fit.sum())
+        d_in = torch.tensor(grid_train[fit], dtype=torch.float32, device=self.device)
+        d_out = torch.tensor(self.Zs[fit], dtype=torch.float32, device=self.device).squeeze()
 
         # Create noise model for GP model
         likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_constraint=gpytorch.constraints.GreaterThan(1e-4))
@@ -309,7 +329,8 @@ class TraversabilityAnalyzer:
             likelihood.noise = self.gp_noise_init
         # Build GP model (see file for description)
         sgp_model = SGPModel(d_in, d_out, likelihood, self.inducing_points, self.lengthscale, self.alpha, self.apply_kernel_init,
-                             lengthscale_max=self.gp_lengthscale_max).to(self.device)
+                             lengthscale_max=self.gp_lengthscale_max,
+                             lengthscale_min=self.gp_lengthscale_min).to(self.device)
 
         # Added: warm start from the previous frame's hyperparameters (not the inducing points, which follow the data)
         self.gp_warm_used = False

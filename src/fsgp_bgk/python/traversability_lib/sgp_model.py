@@ -28,8 +28,9 @@ import gpytorch
 class SGPModel(gpytorch.models.ExactGP):
     # Added: lengthscale may be one value (all inputs) or one per input [x, y, curvature, gradient];
     # lengthscale_max: optional per-input upper bounds (None or a None entry = unbounded), apply_kernel_init only
+    # lengthscale_min: optional per-input lower bounds, the same way (docs/gp_rock_lengthscale_plan.md)
     def __init__(self, train_x, train_y, likelihood, inducing_points, lengthscale=0.7, alpha=10, apply_kernel_init=False,
-                 lengthscale_max=None):
+                 lengthscale_max=None, lengthscale_min=None):
         super(SGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
 
@@ -46,11 +47,14 @@ class SGPModel(gpytorch.models.ExactGP):
             n_dims = train_x.shape[-1]
             init = torch.as_tensor(lengthscale, dtype=torch.float32).expand(n_dims).clone()
             constraint = None
-            if lengthscale_max is not None:
-                # Upper bounds per input (unbounded = 1e4); the starting value must lie inside the bound
-                upper = torch.tensor([1e4 if m is None else float(m) for m in lengthscale_max], dtype=torch.float32)
-                constraint = gpytorch.constraints.Interval(torch.full_like(upper, 1e-4), upper)
-                init = torch.minimum(init, 0.95 * upper)
+            if lengthscale_max is not None or lengthscale_min is not None:
+                # Bounds per input (unbounded = 1e-4 / 1e4); the starting value must lie inside the bounds
+                bound = lambda b, n, default: torch.tensor([default if b is None or b[i] is None else float(b[i])
+                                                            for i in range(n)], dtype=torch.float32)
+                upper = bound(lengthscale_max, n_dims, 1e4)
+                lower = bound(lengthscale_min, n_dims, 1e-4)
+                constraint = gpytorch.constraints.Interval(lower, upper)
+                init = torch.minimum(torch.maximum(init, 1.05 * lower), 0.95 * upper)
             rq_kernel = gpytorch.kernels.RQKernel(ard_num_dims=n_dims, lengthscale_constraint=constraint)
             rq_kernel.lengthscale = init.reshape(1, n_dims)
             rq_kernel.alpha = alpha
