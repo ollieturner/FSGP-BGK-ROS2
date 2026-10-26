@@ -1,0 +1,616 @@
+{
+  "dataset": "/home/oliver/Documents/AMME4112/AMME4112_risk_aware_rover/lusnar_data/Moon_8",
+  "output": "/home/oliver/Documents/AMME4112/AMME4112_risk_aware_rover/src/fsgp_bgk/src/simulation_env_ros2/PCD/lusnar_moon8_step_c.pcd",
+  "frame_note": "pcd = (x_world - xy_offset[0], y_world - xy_offset[1], -z_world - z_offset); x_world/y_world/z_world in the LuSNAR LiDAR pose frame (z-down), XY shared with gt.txt",
+  "xy_offset": [
+    50.2,
+    -232.1
+  ],
+  "z_offset": -1.5173953771591187,
+  "tile_size": [
+    10.0,
+    12.0
+  ],
+  "params": {
+    "voxel": 0.05,
+    "min_range": 1.5,
+    "max_range": 20.0,
+    "scan_stride": 1,
+    "rock_target": 0.02,
+    "rock_weight": 0.5,
+    "relief_target": 0.1,
+    "relief_weight": 1.0
+  },
+  "tile_candidates": null,
+  "scans_used": 209,
+  "holdout_scan": 1693502139077789440,
+  "raw_points": 913102,
+  "points": 49493,
+  "rock_points": 5200,
+  "labels": {
+    "-1": 44293,
+    "174": 5200
+  },
+  "extent_min": [
+    -4.992541313171387,
+    -5.999868869781494,
+    0.0
+  ],
+  "extent_max": [
+    4.994115829467773,
+    5.9926934242248535,
+    1.806470685672806
+  ],
+  "coverage": 1.0,
+  "registration_check": {
+    "median": 0.019490102710905,
+    "p90": 0.02811420466124094,
+    "n": 15419,
+    "matched_frac": 1.0
+  },
+  "height_above_ground": {
+    "174": 0.2324026273779911
+  },
+  "start_ground_points": 88,
+  "start_ground_z_std": 0.0068343947071121845,
+  "composite": {
+    "note": "Composite scene: base tile plus rocks pasted from elsewhere in the dataset (scripts/compose_tile.py)",
+    "base": "lusnar_moon8_step_base2",
+    "dataset": "/home/oliver/Documents/AMME4112/AMME4112_risk_aware_rover/lusnar_data/Moon_8",
+    "keep_clear": [
+      [
+        0.0,
+        -4.5
+      ],
+      [
+        1.0,
+        4.5
+      ]
+    ],
+    "min_gap": 0.4,
+    "z_shift": 0.0,
+    "layout": "/home/oliver/Documents/AMME4112/AMME4112_risk_aware_rover/results/synthetic_scenes/step_c/layout.json",
+    "placements": [
+      {
+        "rock_source_query": [
+          -8.9,
+          8.5
+        ],
+        "rock_source_centre_world": [
+          -9.052236374751592,
+          8.532706934127136
+        ],
+        "rock_points": 305,
+        "rock_extent": [
+          1.1138429641723633,
+          0.7756662368774414
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          3.604,
+          -2.419
+        ],
+        "rotate_deg": 341.5,
+        "source_ground_rms": 0.0024068891921623123,
+        "target_ground_rms": 0.014934711943823011,
+        "removed_points": 400,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.26968502905099123,
+        "height_above_ground_placed_p50": 0.26968502905099123,
+        "height_above_ground_top_p98": 0.40997710034704693,
+        "lowest_points_p2_vs_ground": 0.0193996175346348,
+        "gap_to_other_rocks": Infinity
+      },
+      {
+        "rock_source_query": [
+          63.8,
+          -220.1
+        ],
+        "rock_source_centre_world": [
+          63.77083084230351,
+          -220.0828451281537
+        ],
+        "rock_points": 843,
+        "rock_extent": [
+          1.1619040447732658,
+          0.9301762898763002
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          -1.505,
+          -0.325
+        ],
+        "rotate_deg": 298.0,
+        "source_ground_rms": 0.002266940615328363,
+        "target_ground_rms": 0.009370833107239199,
+        "removed_points": 457,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.2593672925982392,
+        "height_above_ground_placed_p50": 0.2593672925982393,
+        "height_above_ground_top_p98": 0.4117331775909351,
+        "lowest_points_p2_vs_ground": 0.0012374559421040043,
+        "gap_to_other_rocks": 4.141856541356467
+      },
+      {
+        "rock_source_query": [
+          71.4,
+          -210.8
+        ],
+        "rock_source_centre_world": [
+          71.38227284587587,
+          -210.79376228807362
+        ],
+        "rock_points": 674,
+        "rock_extent": [
+          1.040562438964841,
+          0.9083218044704893
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          2.028,
+          0.536
+        ],
+        "rotate_deg": 118.7,
+        "source_ground_rms": 0.001939036960034896,
+        "target_ground_rms": 0.018415345406567998,
+        "removed_points": 408,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.2377671351158145,
+        "height_above_ground_placed_p50": 0.2377671351158145,
+        "height_above_ground_top_p98": 0.39079250132578053,
+        "lowest_points_p2_vs_ground": 0.006351184851847962,
+        "gap_to_other_rocks": 2.2827766376198673
+      },
+      {
+        "rock_source_query": [
+          -14.5,
+          -5.9
+        ],
+        "rock_source_centre_world": [
+          -14.484382608703843,
+          -5.941842810088992
+        ],
+        "rock_points": 261,
+        "rock_extent": [
+          0.908390998840332,
+          1.0416148503621416
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          -1.901,
+          2.128
+        ],
+        "rotate_deg": 100.9,
+        "source_ground_rms": 0.0003396643912740991,
+        "target_ground_rms": 0.010494846883253786,
+        "removed_points": 372,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.24943464749207048,
+        "height_above_ground_placed_p50": 0.24943464749207056,
+        "height_above_ground_top_p98": 0.45637409324269884,
+        "lowest_points_p2_vs_ground": 0.009751409440112947,
+        "gap_to_other_rocks": 1.3849404387635977
+      },
+      {
+        "rock_source_query": [
+          23.9,
+          -223.8
+        ],
+        "rock_source_centre_world": [
+          23.859839224313244,
+          -223.74673273122252
+        ],
+        "rock_points": 469,
+        "rock_extent": [
+          0.9201286860874731,
+          1.0259552001953125
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          -3.683,
+          0.464
+        ],
+        "rotate_deg": 165.4,
+        "source_ground_rms": 0.0073814516563033995,
+        "target_ground_rms": 0.005213381764634577,
+        "removed_points": 410,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.28734080275532037,
+        "height_above_ground_placed_p50": 0.28734080275532037,
+        "height_above_ground_top_p98": 0.4266313494067691,
+        "lowest_points_p2_vs_ground": 0.009703110191425965,
+        "gap_to_other_rocks": 1.294203165960847
+      },
+      {
+        "rock_source_query": [
+          23.9,
+          -223.8
+        ],
+        "rock_source_centre_world": [
+          23.859839224313244,
+          -223.74673273122252
+        ],
+        "rock_points": 469,
+        "rock_extent": [
+          0.9201286860874731,
+          1.0259552001953125
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          0.744,
+          -1.549
+        ],
+        "rotate_deg": 302.4,
+        "source_ground_rms": 0.0073814516563033995,
+        "target_ground_rms": 0.015269806382972408,
+        "removed_points": 398,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.28734080275532037,
+        "height_above_ground_placed_p50": 0.28734080275532037,
+        "height_above_ground_top_p98": 0.42663134940676906,
+        "lowest_points_p2_vs_ground": 0.009703110191426004,
+        "gap_to_other_rocks": 1.4377673327841707
+      },
+      {
+        "rock_source_query": [
+          23.9,
+          -223.8
+        ],
+        "rock_source_centre_world": [
+          23.859839224313244,
+          -223.74673273122252
+        ],
+        "rock_points": 469,
+        "rock_extent": [
+          0.9201286860874731,
+          1.0259552001953125
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          1.466,
+          2.403
+        ],
+        "rotate_deg": 69.0,
+        "source_ground_rms": 0.0073814516563033995,
+        "target_ground_rms": 0.012660639524614237,
+        "removed_points": 418,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.28734080275532037,
+        "height_above_ground_placed_p50": 0.28734080275532037,
+        "height_above_ground_top_p98": 0.4266313494067691,
+        "lowest_points_p2_vs_ground": 0.009703110191425965,
+        "gap_to_other_rocks": 0.9983806122242439
+      },
+      {
+        "rock_source_query": [
+          23.9,
+          -223.8
+        ],
+        "rock_source_centre_world": [
+          23.859839224313244,
+          -223.74673273122252
+        ],
+        "rock_points": 469,
+        "rock_extent": [
+          0.9201286860874731,
+          1.0259552001953125
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          -0.142,
+          3.21
+        ],
+        "rotate_deg": 152.2,
+        "source_ground_rms": 0.0073814516563033995,
+        "target_ground_rms": 0.016455571806638532,
+        "removed_points": 414,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.28734080275532037,
+        "height_above_ground_placed_p50": 0.28734080275532037,
+        "height_above_ground_top_p98": 0.4266313494067691,
+        "lowest_points_p2_vs_ground": 0.009703110191425965,
+        "gap_to_other_rocks": 0.6006098705529017
+      },
+      {
+        "rock_source_query": [
+          72.8,
+          -220.8
+        ],
+        "rock_source_centre_world": [
+          72.86270873628247,
+          -220.7751133635956
+        ],
+        "rock_points": 589,
+        "rock_extent": [
+          0.9684803009033232,
+          1.0549697875976562
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          3.353,
+          2.701
+        ],
+        "rotate_deg": 318.8,
+        "source_ground_rms": 0.0023975187228586353,
+        "target_ground_rms": 0.013524964566586216,
+        "removed_points": 440,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.28522115085840183,
+        "height_above_ground_placed_p50": 0.28522115085840194,
+        "height_above_ground_top_p98": 0.41749829262454563,
+        "lowest_points_p2_vs_ground": 0.0095695539457971,
+        "gap_to_other_rocks": 1.0098191011917579
+      },
+      {
+        "rock_source_query": [
+          23.6,
+          -262.3
+        ],
+        "rock_source_centre_world": [
+          23.576901495507148,
+          -262.3228477526239
+        ],
+        "rock_points": 95,
+        "rock_extent": [
+          0.4432668685913086,
+          0.36706265536219007
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          -3.953,
+          -1.531
+        ],
+        "rotate_deg": 151.6,
+        "source_ground_rms": 0.017408174034232407,
+        "target_ground_rms": 0.0019877239793292833,
+        "removed_points": 118,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.12887803965199895,
+        "height_above_ground_placed_p50": 0.12887803965199907,
+        "height_above_ground_top_p98": 0.20828069565125654,
+        "lowest_points_p2_vs_ground": 0.031800566050371654,
+        "gap_to_other_rocks": 1.1579505235456533
+      },
+      {
+        "rock_source_query": [
+          94.5,
+          -145.3
+        ],
+        "rock_source_centre_world": [
+          94.46127533403862,
+          -145.28201227293098
+        ],
+        "rock_points": 59,
+        "rock_extent": [
+          0.2840016682942661,
+          0.2824452718099053
+        ],
+        "rock_sectors": "15/16",
+        "placed_at_tile": [
+          2.482,
+          -0.937
+        ],
+        "rotate_deg": 195.7,
+        "source_ground_rms": 3.3600217703107302e-06,
+        "target_ground_rms": 0.008893765131551821,
+        "removed_points": 79,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.06536795264261325,
+        "height_above_ground_placed_p50": 0.06536795264261319,
+        "height_above_ground_top_p98": 0.11709362622300783,
+        "lowest_points_p2_vs_ground": 0.0042435647103403265,
+        "gap_to_other_rocks": 1.0060740339520264
+      },
+      {
+        "rock_source_query": [
+          12.4,
+          4.4
+        ],
+        "rock_source_centre_world": [
+          12.438773514093926,
+          4.393620890409465
+        ],
+        "rock_points": 61,
+        "rock_extent": [
+          0.2964881658554077,
+          0.23348667922320665
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          -2.971,
+          -0.678
+        ],
+        "rotate_deg": 151.5,
+        "source_ground_rms": 0.002359246659690936,
+        "target_ground_rms": 0.0018652769414306404,
+        "removed_points": 75,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.07715969987974441,
+        "height_above_ground_placed_p50": 0.07715969987974436,
+        "height_above_ground_top_p98": 0.11077582901778622,
+        "lowest_points_p2_vs_ground": 0.0027295203165370375,
+        "gap_to_other_rocks": 0.5884998639839685
+      },
+      {
+        "rock_source_query": [
+          94.5,
+          -145.3
+        ],
+        "rock_source_centre_world": [
+          94.46127533403862,
+          -145.28201227293098
+        ],
+        "rock_points": 59,
+        "rock_extent": [
+          0.2840016682942661,
+          0.2824452718099053
+        ],
+        "rock_sectors": "15/16",
+        "placed_at_tile": [
+          -0.353,
+          0.899
+        ],
+        "rotate_deg": 302.3,
+        "source_ground_rms": 3.3600217703107302e-06,
+        "target_ground_rms": 0.012824223937304337,
+        "removed_points": 77,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.06536795264261325,
+        "height_above_ground_placed_p50": 0.06536795264261319,
+        "height_above_ground_top_p98": 0.11709362622300783,
+        "lowest_points_p2_vs_ground": 0.0042435647103403265,
+        "gap_to_other_rocks": 1.1800513677198115
+      },
+      {
+        "rock_source_query": [
+          22.3,
+          -236.3
+        ],
+        "rock_source_centre_world": [
+          22.3097791788562,
+          -236.30521186000973
+        ],
+        "rock_points": 146,
+        "rock_extent": [
+          0.4567985534667969,
+          0.38537035490335825
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          3.72,
+          -0.488
+        ],
+        "rotate_deg": 106.3,
+        "source_ground_rms": 0.006227262023316068,
+        "target_ground_rms": 0.004922345736413669,
+        "removed_points": 119,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.16660861810290228,
+        "height_above_ground_placed_p50": 0.16660861810290228,
+        "height_above_ground_top_p98": 0.22916097331078752,
+        "lowest_points_p2_vs_ground": 0.05455612492504756,
+        "gap_to_other_rocks": 0.9740980039195591
+      },
+      {
+        "rock_source_query": [
+          94.5,
+          -145.3
+        ],
+        "rock_source_centre_world": [
+          94.46127533403862,
+          -145.28201227293098
+        ],
+        "rock_points": 59,
+        "rock_extent": [
+          0.2840016682942661,
+          0.2824452718099053
+        ],
+        "rock_sectors": "15/16",
+        "placed_at_tile": [
+          3.798,
+          1.189
+        ],
+        "rotate_deg": 249.7,
+        "source_ground_rms": 3.3600217703107302e-06,
+        "target_ground_rms": 0.012791459199145096,
+        "removed_points": 77,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.06536795264261325,
+        "height_above_ground_placed_p50": 0.06536795264261319,
+        "height_above_ground_top_p98": 0.11709362622300783,
+        "lowest_points_p2_vs_ground": 0.0042435647103403265,
+        "gap_to_other_rocks": 0.9037667303445791
+      },
+      {
+        "rock_source_query": [
+          94.5,
+          -145.3
+        ],
+        "rock_source_centre_world": [
+          94.46127533403862,
+          -145.28201227293098
+        ],
+        "rock_points": 59,
+        "rock_extent": [
+          0.2840016682942661,
+          0.2824452718099053
+        ],
+        "rock_sectors": "15/16",
+        "placed_at_tile": [
+          -0.183,
+          -2.543
+        ],
+        "rotate_deg": 80.1,
+        "source_ground_rms": 3.3600217703107302e-06,
+        "target_ground_rms": 0.008855957133266227,
+        "removed_points": 76,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.06536795264261325,
+        "height_above_ground_placed_p50": 0.0653679526426133,
+        "height_above_ground_top_p98": 0.11709362622300783,
+        "lowest_points_p2_vs_ground": 0.0042435647103403265,
+        "gap_to_other_rocks": 0.8203905351987829
+      },
+      {
+        "rock_source_query": [
+          12.4,
+          4.4
+        ],
+        "rock_source_centre_world": [
+          12.438773514093926,
+          4.393620890409465
+        ],
+        "rock_points": 61,
+        "rock_extent": [
+          0.2964881658554077,
+          0.23348667922320665
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          -3.398,
+          3.721
+        ],
+        "rotate_deg": 194.4,
+        "source_ground_rms": 0.002359246659690936,
+        "target_ground_rms": 0.003988448043460122,
+        "removed_points": 72,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.07715969987974441,
+        "height_above_ground_placed_p50": 0.07715969987974436,
+        "height_above_ground_top_p98": 0.11077582901778622,
+        "lowest_points_p2_vs_ground": 0.0027295203165370375,
+        "gap_to_other_rocks": 1.7899624305161836
+      },
+      {
+        "rock_source_query": [
+          81.6,
+          -49.9
+        ],
+        "rock_source_centre_world": [
+          81.62747053993802,
+          -49.90493862269685
+        ],
+        "rock_points": 53,
+        "rock_extent": [
+          0.2556147575378418,
+          0.2294279878789709
+        ],
+        "rock_sectors": "16/16",
+        "placed_at_tile": [
+          0.296,
+          -0.117
+        ],
+        "rotate_deg": 344.6,
+        "source_ground_rms": 1.9721087149072e-05,
+        "target_ground_rms": 0.009994504275838374,
+        "removed_points": 61,
+        "left_under": 0,
+        "height_above_ground_source_p50": 0.058554701861299074,
+        "height_above_ground_placed_p50": 0.058554701861299074,
+        "height_above_ground_top_p98": 0.10493527587666293,
+        "lowest_points_p2_vs_ground": 0.003531051159225882,
+        "gap_to_other_rocks": 0.858695758547682
+      }
+    ]
+  }
+}
