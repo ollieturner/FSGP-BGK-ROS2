@@ -68,4 +68,18 @@ publish_raw_risk_factors: False # also publish each factor's value before normal
 edge_lethal: False          # True = original: window edge (r > 2.1 m) and corners published as cost 1 (lethal); False = unknown (NaN -> -1 downstream) so a global planner can plan beyond the edge
 level_cloud: True           # rotate each cloud by the robot's roll / pitch first, so slope is against gravity; False = original (relative to the robot's body, which the simulator tilts to the ground)
 robot_points_in_features: False  # True = original: robot points (curvature / gradient 0) in the feature interpolation; False = real key points only (docs/lidar_robot_points_coverage_plan.md, set 2026-10-23)
-robot_points_extent: [0.612, 0.58]  # robot-point area [length (x, forward), width (y)] in m, or one value for a square; 0 = whole window (original). Rover footprint 612 x 580 mm (set 2026-10-24)
+robot_points_extent: [0.612, 0.58]  # robot-point area [length (x, forward), width (y)] in m, or one value for a square; 0 = whole window (original). Rover footprint 612 x 580 mm (set 2026-10-24)# GP fit on ground points only (docs/gp_rock_lengthscale_plan.md, set as default 2026-10-26): key points whose curvature
+# feature is above this are left out of the GP height fit, so rocks don't shorten the lengthscale and fake slope on
+# nearby ground; step height / flatness still use every point. null = original (fit on every point)
+gp_fit_max_curvature: 0.006
+# Artificial lidar occlusion of the input cloud (docs/fusion_occlusion_plan.md, set as default 2026-10-26): the
+# FSGP-BGK paper's simulation condition (15 % of the point cloud occluded). sectors = whole azimuth wedges (k of them)
+# removing that share of the points; random = scattered points. 0 / null = off
+input_occlusion_fraction: 0.15
+input_occlusion_mode: sectors
+input_occlusion_sectors: 3
+input_occlusion_seed: 0
+# Multi-frame fusion of each world cell's factor samples in the live node (docs/fusion_occlusion_plan.md, phase 2):
+# null = off (each frame published as observed), bgk_paper (paper eqs 9-10), information (precision-weighted)
+fusion_method: null
+fusion_history_frames: 5

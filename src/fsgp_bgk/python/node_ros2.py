@@ -38,6 +38,8 @@ from sensor_msgs.msg import PointCloud2, PointField
 from nav_msgs.msg import Odometry
 import numpy as np
 from f_sgp_bgk import TraversabilityAnalyzer  
+from traversability_lib.occlusion import occlude_points
+from traversability_lib.fusion import LiveFusion
 from sensor_msgs_py import point_cloud2 as pc2
 from std_msgs.msg import Header
 from tf_transformations import euler_from_quaternion, quaternion_from_euler, quaternion_matrix
@@ -66,6 +68,18 @@ class FSGP_BGK_Node(Node):
         self.max_height = config["max_cloud_height"]
         self.map_update_rate = config["map_update_rate"]
         self.publish_resolution = config["publish_resolution"]
+        # Added (docs/fusion_occlusion_plan.md): artificial lidar occlusion of the input cloud, off when missing / 0
+        # - fraction of the points removed; mode sectors (whole azimuth wedges) or random; seeded per frame from the seed,
+        #   the pose and a frame count, so survey points (each a fresh launch at frame 0, yaw 0) get different wedges
+        self.occlusion_fraction = float(config.get("input_occlusion_fraction") or 0.0)
+        self.occlusion_mode = config.get("input_occlusion_mode", "sectors")
+        self.occlusion_sectors = int(config.get("input_occlusion_sectors", 3))
+        self.occlusion_seed = int(config.get("input_occlusion_seed", 0))
+        self.occlusion_frame = 0
+        # Added (docs/fusion_occlusion_plan.md, phase 2): multi-frame fusion of each world cell's factor samples,
+        # off when fusion_method is missing / null
+        self.fusion_method = config.get("fusion_method")
+        self.fusion_history_frames = int(config.get("fusion_history_frames", 5))
 
         # Start Traversability Analyser object
         self.analyzer = TraversabilityAnalyzer(config_path=config_path)
@@ -123,6 +137,14 @@ class FSGP_BGK_Node(Node):
 
         # Grid for per-factor distributions for each cell, if enabled
         self.publish_risk_factors = self.analyzer.publish_risk_factors
+        self.fusion = None
+        if self.fusion_method:
+            if not self.publish_risk_factors:
+                raise ValueError('fusion_method needs publish_risk_factors: True (it fuses the factor samples)')
+            self.fusion = LiveFusion(self.fusion_method, self.fusion_history_frames, self.grid_resolution,
+                                     prune_radius=self.max_radius + 1.0)
+            self.get_logger().info(f'Fusing each cell over its last {self.fusion_history_frames} frames '
+                                   f'({self.fusion_method})')
         if self.publish_risk_factors:
             self.global_factor_grid = np.full((*self.grid_size, 3 * self.num_samples), np.nan, dtype=np.float32)
         # Added: same for the raw (pre-normalisation) factor values, if enabled
@@ -317,6 +339,12 @@ class FSGP_BGK_Node(Node):
 
         # Turn point cloud into (x, y, z) array
         local_points_np = self.pointcloud2_to_xyz(cloud)
+        if self.occlusion_fraction > 0:
+            rng = np.random.default_rng([self.occlusion_seed, int(round(pose[0] * 100)) & 0xFFFFFFFF,
+                                         int(round(pose[1] * 100)) & 0xFFFFFFFF, self.occlusion_frame])
+            local_points_np = occlude_points(local_points_np, self.occlusion_fraction, rng, self.occlusion_mode,
+                                             self.occlusion_sectors)
+            self.occlusion_frame += 1
 
         # Analyse point cloud with FSGP-BGK analyser (traversability costs etc)
         self.analyzer.update_map(pose, local_points_np)
@@ -362,6 +390,17 @@ class FSGP_BGK_Node(Node):
                                                    self.analyzer.step_height_samples])
             local_factors = local_factors.reshape(nx, ny, 3 * self.num_samples)
             self.global_factor_grid = self._local_to_map_grid(local_factors, yaw, fill=np.nan)
+            # Added: fuse each world cell's last frames (fusion_method), then rebuild the traversability samples from
+            # the fused factors with the usual weights; cells without factor data keep their samples
+            if self.fusion is not None:
+                self.global_factor_grid, _ = self.fusion.update(self.global_factor_grid, self.cell_dx, self.cell_dy,
+                                                                 pose[:2])
+                n = self.num_samples
+                fused = self.global_factor_grid
+                has = np.isfinite(fused).all(axis=-1)
+                self.global_sample_grid[has] = (self.analyzer.w_slope * fused[has, :n]
+                                                + self.analyzer.w_flatness * fused[has, n:2 * n]
+                                                + self.analyzer.w_step_height * fused[has, 2 * n:])
         if self.publish_raw_risk_factors:
             local_raw = np.full((nx * ny, 3 * self.num_samples), np.nan, dtype=np.float32)
             local_raw[keep] = np.column_stack([self.analyzer.slope_raw_samples, self.analyzer.flatness_raw_samples,
