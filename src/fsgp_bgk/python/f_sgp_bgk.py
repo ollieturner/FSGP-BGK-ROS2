@@ -263,6 +263,9 @@ class TraversabilityAnalyzer:
 
     # Generate the traversability distributions (and per-factor when enabled) for the local costmap (some changes here compared to FSGP-BGK)
     def generate_local_traversability_map(self, pose, transformed_points):
+        # Added: per-stage wall times of this frame [s] (docs/compute_time_stage_plan.md), logged by node_ros2
+        self.stage_times = {}
+        stage_start = time.perf_counter()
         # Extract pose and point cloud
         self.pose = pose
         # Added: level the cloud by the robot's roll / pitch (level_cloud), so everything below is against gravity
@@ -322,6 +325,9 @@ class TraversabilityAnalyzer:
         d_in = torch.tensor(grid_train[fit], dtype=torch.float32, device=self.device)
         d_out = torch.tensor(self.Zs[fit], dtype=torch.float32, device=self.device).squeeze()
 
+        now = time.perf_counter()
+        self.stage_times['preprocess'], stage_start = now - stage_start, now
+
         # Create noise model for GP model
         likelihood = gpytorch.likelihoods.GaussianLikelihood(noise_constraint=gpytorch.constraints.GreaterThan(1e-4))
         # Use GP noise from config, instead of the GPpTorch default 0.693
@@ -370,6 +376,9 @@ class TraversabilityAnalyzer:
             self._gp_hyperparameters = {name: param.detach().clone() for name, param in sgp_model.named_parameters()
                                         if 'inducing_points' not in name}
 
+        now = time.perf_counter()
+        self.stage_times['gp_train'], stage_start = now - stage_start, now
+
         # Switch to prediction mode (return posterior/prediction)
         sgp_model.eval()
         likelihood.eval()
@@ -397,10 +406,13 @@ class TraversabilityAnalyzer:
 
         # Save predicted heights to publish as z coordinate in node_ros2
         self.mean = mean       
+        now = time.perf_counter()
+        self.stage_times['gp_predict'], stage_start = now - stage_start, now
 
         # Use the trained GP model in the sampling loop to produce a distribution of traversability values per cell (removed original detemrinistic method)
         if self.num_samples > 0:
             self.traversability_samples = self.sample_traversability_distribution(sgp_model)
+        self.stage_times['sampling'] = time.perf_counter() - stage_start
 
     # Produce N samples of traversability cost at each cell from terrain risk factors (skips BGK fusion )
     def sample_traversability_distribution(self, sgp_model):

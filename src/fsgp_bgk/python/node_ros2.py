@@ -27,6 +27,7 @@ SOFTWARE.
 # - Distributions placed onto grid centred on robot then published
 
 import os
+import time
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
@@ -113,6 +114,7 @@ class FSGP_BGK_Node(Node):
         # DIAG step 0 (docs/pose_cloud_sync_plan.md): track how fresh the pose/cloud are each frame - remove after verifying
         self.diag_cloud_cbs = 0         # elevation_cb calls since the previous frame
         self.diag_prev_pose = None      # Pose used by the previous frame
+        self.prev_frame_start = None    # perf_counter at the previous processed frame's start (frame_interval)
 
         self.grid_resolution = self.analyzer.resolution
         # Changed: original node grid was 24 x 24 (int(5 // 0.2), float floor) while the analyser's is 25 x 25, so cells
@@ -326,6 +328,10 @@ class FSGP_BGK_Node(Node):
 
         # DIAG step 0 (docs/pose_cloud_sync_plan.md): cloud age, pose vs cloud stamp, callbacks since last frame
         diag_start = self.get_clock().now()
+        # Added: per-stage frame timing (docs/compute_time_stage_plan.md); interval = start to start of processed frames
+        frame_start = time.perf_counter()
+        frame_interval = float('nan') if self.prev_frame_start is None else frame_start - self.prev_frame_start
+        self.prev_frame_start = frame_start
         diag_cloud_age = (diag_start - Time.from_msg(stamp)).nanoseconds / 1e9
         diag_pose_age = (diag_start - Time.from_msg(pose_stamp)).nanoseconds / 1e9
         diag_pose_vs_cloud = (Time.from_msg(pose_stamp) - Time.from_msg(stamp)).nanoseconds / 1e9
@@ -346,8 +352,11 @@ class FSGP_BGK_Node(Node):
                                              self.occlusion_sectors)
             self.occlusion_frame += 1
 
+        cloud_in = time.perf_counter() - frame_start
+
         # Analyse point cloud with FSGP-BGK analyser (traversability costs etc)
         self.analyzer.update_map(pose, local_points_np)
+        grid_start = time.perf_counter()
 
         # Each cell's (x, y) position and predicted height (mean)
         # grid = self.analyzer.grid
@@ -414,6 +423,16 @@ class FSGP_BGK_Node(Node):
         # DIAG step 0: compute time = how stale the published map is when it goes out (stamp is now the cloud's time)
         diag_compute = (self.get_clock().now() - diag_start).nanoseconds / 1e9
         self.get_logger().info(f'{diag_msg} compute={diag_compute:.3f}s')
+
+        # Added: per-stage timing [s]; preprocess includes cloud -> xyz and occlusion, grid_publish the grid rebuild,
+        # rotation, fusion and publishing (docs/compute_time_stage_plan.md)
+        now = time.perf_counter()
+        stages = dict(self.analyzer.stage_times)
+        stages['preprocess'] = stages.get('preprocess', float('nan')) + cloud_in
+        self.get_logger().info(
+            '[stage timing] ' + ' '.join(f'{k}={stages.get(k, float("nan")):.4f}'
+                                         for k in ('preprocess', 'gp_train', 'gp_predict', 'sampling'))
+            + f' grid_publish={now - grid_start:.4f} total={now - frame_start:.4f} frame_interval={frame_interval:.4f}')
 
 
     # Edited: Publish the sample grid as a point cloud in map frame (one point per grid cell)

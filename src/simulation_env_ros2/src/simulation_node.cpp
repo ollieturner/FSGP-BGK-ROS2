@@ -65,6 +65,7 @@ private:
         declare_parameter<double>("init_x", 0.0);
         declare_parameter<double>("init_y", 0.0);
         declare_parameter<double>("init_z", 0.0);
+        declare_parameter<double>("init_yaw", 0.0);    // Spawn heading [deg], 0 = east (+x), 90 = north (+y)
 
         // Plane fitting parameters
         declare_parameter<double>("max_tilt_angle", 30.0);
@@ -90,6 +91,7 @@ private:
         init_x_ = get_parameter("init_x").as_double();
         init_y_ = get_parameter("init_y").as_double();
         init_z_ = get_parameter("init_z").as_double();
+        current_yaw_ = get_parameter("init_yaw").as_double() * M_PI / 180.0;
 
         max_tilt_angle_ = get_parameter("max_tilt_angle").as_double() * M_PI / 180.0;
         inlier_threshold_ = get_parameter("inlier_threshold").as_double();
@@ -153,7 +155,9 @@ private:
         current_pose_.position.x = init_x_;
         current_pose_.position.y = init_y_;
         current_pose_.position.z = init_z_;
-        current_pose_.orientation = tf2::toMsg(tf2::Quaternion::getIdentity());
+        tf2::Quaternion q;
+        q.setRPY(0, 0, current_yaw_);    // init_yaw (identity when 0)
+        current_pose_.orientation = tf2::toMsg(q);
     }
     
     // Control loop

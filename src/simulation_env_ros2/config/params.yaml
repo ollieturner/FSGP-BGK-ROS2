@@ -5,6 +5,7 @@ simulation_node:
     init_x: 0.0
     init_y: 0.0
     init_z: 0.0
+    init_yaw: 0.0    # Spawn heading [deg], 0 = east (+x), 90 = north (+y)
 
     # Robot model
     mesh_resource: "package://simulation_env/meshes/robot.dae"
